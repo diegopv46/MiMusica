@@ -72,12 +72,12 @@ fun Art(uri: Uri?, modifier: Modifier) {
     }
 }
 
-private fun fmt(ms: Long): String {
+fun fmt(ms: Long): String {
     val s = (ms / 1000).coerceAtLeast(0)
     return "%d:%02d".format(s / 60, s % 60)
 }
 
-private fun techInfo(ctx: Context, uri: Uri): String {
+fun techInfo(ctx: Context, uri: Uri): String {
     val ex = MediaExtractor()
     try {
         ex.setDataSource(ctx, uri, null)
@@ -212,7 +212,7 @@ fun MusicApp(
     } else if (overlay == "folders") {
         FoldersScreen(folders, onAddFolder, onRemoveFolder, onBack = { overlay = null })
     } else {
-        Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().background(if (nav == 3) Color.Black else Color.Transparent)) {
             Box(Modifier.weight(1f).fillMaxWidth().statusBarsPadding()) {
                 when (nav) {
                     0 -> {
@@ -360,30 +360,7 @@ fun MusicApp(
                     else -> EqScreen()
                 }
             }
-            if (current != null) {
-                Surface(tonalElevation = 4.dp, modifier = Modifier.fillMaxWidth().clickable { overlay = "now" }) {
-                    Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Art(curUri, Modifier.size(44.dp))
-                        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                            Text(current?.mediaMetadata?.title?.toString() ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                            Text(current?.mediaMetadata?.artist?.toString() ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                        }
-                        IconButton(onClick = { controller?.seekToPrevious() }) { Icon(Icons.Rounded.SkipPrevious, "Anterior") }
-                        FilledIconButton(onClick = { controller?.let { if (it.isPlaying) it.pause() else it.play() } }) {
-                            Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pausa")
-                        }
-                        IconButton(onClick = { controller?.seekToNext() }) { Icon(Icons.Rounded.SkipNext, "Siguiente") }
-                    }
-                }
-            }
-            NavigationBar {
-                listOf(
-                    "Biblioteca" to Icons.Rounded.LibraryMusic, "Playlists" to Icons.Rounded.PlaylistPlay,
-                    "Cola" to Icons.Rounded.QueueMusic, "EQ" to Icons.Rounded.Tune
-                ).forEachIndexed { i, (label, icon) ->
-                    NavigationBarItem(selected = nav == i, onClick = { nav = i }, icon = { Icon(icon, label) }, label = { Text(label) })
-                }
-            }
+            BottomDock(current, isPlaying, position, duration, nav, { nav = it }, controller) { overlay = "now" }
         }
     }
 
@@ -430,91 +407,6 @@ fun MusicApp(
 }
 
 @Composable
-fun NowPlaying(
-    c: MediaController?, item: MediaItem?, isPlaying: Boolean, shuffle: Boolean, repeat: Int,
-    position: Long, duration: Long, remainingMs: Long,
-    onBack: () -> Unit, onEq: () -> Unit, onTimer: () -> Unit
-) {
-    val ctx = LocalContext.current
-    val id = item?.mediaId?.toLongOrNull()
-    val uri = id?.let { uriOf(it) }
-    var tint by remember { mutableStateOf<Color?>(null) }
-    LaunchedEffect(uri) {
-        tint = uri?.let { u -> loadArt(ctx, u)?.let { b -> Color(Bitmap.createScaledBitmap(b, 1, 1, true).getPixel(0, 0)) } }
-    }
-    var info by remember(id) { mutableStateOf("") }
-    LaunchedEffect(id) {
-        info = if (uri == null) "" else withContext(Dispatchers.IO) { runCatching { techInfo(ctx, uri) }.getOrDefault("") }
-    }
-    val surface = MaterialTheme.colorScheme.surface
-    val top by animateColorAsState(tint ?: surface, label = "bg")
-    var dragging by remember { mutableStateOf(false) }
-    var dragValue by remember { mutableFloatStateOf(0f) }
-    val active = MaterialTheme.colorScheme.primary
-    val idle = MaterialTheme.colorScheme.onSurfaceVariant
-
-    Column(
-        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(lerp(surface, top, 0.6f), surface)))
-            .statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Rounded.KeyboardArrowDown, "Cerrar", Modifier.size(32.dp)) }
-            Text("Reproduciendo", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        }
-        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
-            Art(uri, Modifier.fillMaxSize())
-            if (id != null) {
-                FilledTonalIconButton(onClick = { Store.toggleFav(id) }, modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)) {
-                    Icon(if (id in Store.favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favorita")
-                }
-            }
-        }
-        Spacer(Modifier.height(20.dp))
-        Text(item?.mediaMetadata?.title?.toString() ?: "", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(item?.mediaMetadata?.artist?.toString() ?: "", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (info.isNotEmpty()) Text(info, style = MaterialTheme.typography.labelMedium, color = idle, modifier = Modifier.padding(top = 6.dp))
-        Spacer(Modifier.weight(1f))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onEq) { Icon(Icons.Rounded.Tune, "Ecualizador") }
-            IconButton(onClick = onTimer) { Icon(Icons.Rounded.Timer, "Temporizador", tint = if (remainingMs > 0) active else idle) }
-            if (remainingMs > 0) Text("${remainingMs / 60000 + 1} min", style = MaterialTheme.typography.labelMedium, color = active)
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = {
-                c?.repeatMode = when (repeat) {
-                    Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                    Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                    else -> Player.REPEAT_MODE_OFF
-                }
-            }) {
-                Icon(if (repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repetir",
-                    tint = if (repeat == Player.REPEAT_MODE_OFF) idle else active)
-            }
-            IconButton(onClick = { c?.shuffleModeEnabled = !shuffle }) {
-                Icon(Icons.Rounded.Shuffle, "Aleatorio", tint = if (shuffle) active else idle)
-            }
-        }
-        Slider(
-            value = if (dragging) dragValue else position.toFloat(),
-            onValueChange = { dragging = true; dragValue = it },
-            onValueChangeFinished = { c?.seekTo(dragValue.toLong()); dragging = false },
-            valueRange = 0f..maxOf(duration.toFloat(), 1f)
-        )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(fmt(if (dragging) dragValue.toLong() else position), style = MaterialTheme.typography.labelMedium)
-            Text(fmt(duration), style = MaterialTheme.typography.labelMedium)
-        }
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { c?.seekToPrevious() }, modifier = Modifier.size(64.dp)) { Icon(Icons.Rounded.SkipPrevious, "Anterior", Modifier.size(40.dp)) }
-            FilledIconButton(onClick = { c?.let { if (it.isPlaying) it.pause() else it.play() } }, modifier = Modifier.size(84.dp)) {
-                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pausa", Modifier.size(48.dp))
-            }
-            IconButton(onClick = { c?.seekToNext() }, modifier = Modifier.size(64.dp)) { Icon(Icons.Rounded.SkipNext, "Siguiente", Modifier.size(40.dp)) }
-        }
-    }
-}
-
-@Composable
 fun FoldersScreen(folders: Set<String>, onAdd: () -> Unit, onRemove: (String) -> Unit, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -534,48 +426,3 @@ fun FoldersScreen(folders: Set<String>, onAdd: () -> Unit, onRemove: (String) ->
     }
 }
 
-@Composable
-fun EqScreen() {
-    val ctx = LocalContext.current
-    val prefs = remember { ctx.getSharedPreferences("eq", Context.MODE_PRIVATE) }
-    val eq = Eq.equalizer
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Text("Ecualizador", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        if (eq == null) {
-            Text("Reproduce una canción para activar el ecualizador.", modifier = Modifier.padding(vertical = 16.dp))
-        } else {
-            val n = eq.numberOfBands.toInt()
-            val range = eq.bandLevelRange
-            var on by remember { mutableStateOf(eq.enabled) }
-            val levels = remember { mutableStateListOf<Float>().apply { for (b in 0 until n) add(eq.getBandLevel(b.toShort()).toFloat()) } }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-                Text("Activado", modifier = Modifier.weight(1f))
-                Switch(checked = on, onCheckedChange = { on = it; eq.enabled = it; prefs.edit().putBoolean("on", it).apply() })
-            }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items((0 until eq.numberOfPresets.toInt()).toList()) { p ->
-                    AssistChip(
-                        onClick = {
-                            eq.usePreset(p.toShort())
-                            on = true; eq.enabled = true
-                            val e = prefs.edit().putBoolean("on", true)
-                            for (b in 0 until n) { levels[b] = eq.getBandLevel(b.toShort()).toFloat(); e.putInt("b$b", levels[b].toInt()) }
-                            e.apply()
-                        },
-                        label = { Text(eq.getPresetName(p.toShort())) }
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            for (b in 0 until n) {
-                Text("${eq.getCenterFreq(b.toShort()) / 1000} Hz   ${(levels[b] / 100).toInt()} dB", style = MaterialTheme.typography.labelLarge)
-                Slider(
-                    value = levels[b],
-                    onValueChange = { levels[b] = it; eq.setBandLevel(b.toShort(), it.toInt().toShort()) },
-                    onValueChangeFinished = { prefs.edit().putInt("b$b", levels[b].toInt()).apply() },
-                    valueRange = range[0].toFloat()..range[1].toFloat()
-                )
-            }
-        }
-    }
-}

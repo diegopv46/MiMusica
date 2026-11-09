@@ -167,6 +167,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         folders = sp.getStringSet("folders", emptySet())?.toSet() ?: emptySet()
         Store.init(this)
+        Dsp.init(this)
         setContent {
             val dark = isSystemInDarkTheme()
             val ctx = LocalContext.current
