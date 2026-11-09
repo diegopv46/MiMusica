@@ -2,6 +2,11 @@ package com.example.mimusica
 
 import android.content.Context
 import android.media.audiofx.Equalizer
+import android.os.Handler
+import android.os.Looper
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -30,6 +35,20 @@ object Eq {
     }
 }
 
+object SleepTimer {
+    var endAt by mutableLongStateOf(0L)
+    var player: Player? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private val task = Runnable { player?.pause(); endAt = 0L }
+
+    fun set(minutes: Int) {
+        handler.removeCallbacks(task)
+        if (minutes <= 0) { endAt = 0L; return }
+        endAt = System.currentTimeMillis() + minutes * 60_000L
+        handler.postDelayed(task, minutes * 60_000L)
+    }
+}
+
 class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
 
@@ -51,12 +70,15 @@ class PlaybackService : MediaSessionService() {
             }
         })
         Eq.attach(this, player.audioSessionId)
+        SleepTimer.player = player
         session = MediaSession.Builder(this, player).build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     override fun onDestroy() {
+        SleepTimer.set(0)
+        SleepTimer.player = null
         runCatching { Eq.equalizer?.release() }
         Eq.equalizer = null
         session?.run {
