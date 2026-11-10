@@ -240,6 +240,25 @@ fun MusicApp(
     }
     LaunchedEffect(nav, tab, detail, plOpen) { selected = emptySet() }
 
+    val ctx = LocalContext.current
+    var restored by remember { mutableStateOf(false) }
+    LaunchedEffect(controller, songs) {
+        val c = controller
+        if (c == null || restored || songs.isEmpty()) return@LaunchedEffect
+        restored = true
+        if (c.mediaItemCount > 0) return@LaunchedEffect
+        val r = Resume.load(ctx) ?: return@LaunchedEffect
+        val by = songs.associateBy { it.id.toString() }
+        val items = r.ids.mapNotNull { by[it]?.item }
+        if (items.isEmpty()) return@LaunchedEffect
+        val curId0 = r.ids.getOrNull(r.index)
+        val idx = items.indexOfFirst { it.mediaId == curId0 }.coerceAtLeast(0)
+        c.shuffleModeEnabled = r.shuffle
+        c.repeatMode = r.repeat
+        c.setMediaItems(items, idx, r.pos)
+        c.prepare()
+    }
+
     BackHandler(overlay != null) { overlay = null }
     BackHandler(overlay == null && selected.isNotEmpty()) { selected = emptySet() }
     BackHandler(overlay == null && selected.isEmpty() && nav == 0 && plOpen != null) { plOpen = null }
@@ -314,6 +333,8 @@ fun MusicApp(
     if (overlay == "now") {
         NowPlaying(controller, current, isPlaying, shuffle, repeat, position, duration, remainingMs,
             onBack = { overlay = null }, onEq = { overlay = null; nav = 3 }, onTimer = { showTimer = true })
+    } else if (overlay == "audio") {
+        AudioInfoScreen(onBack = { overlay = null })
     } else if (overlay == "folders") {
         FoldersScreen(folders, onAddFolder, onRemoveFolder, onBack = { overlay = null })
     } else {
@@ -323,6 +344,7 @@ fun MusicApp(
                     0 -> Column(Modifier.fillMaxSize()) {
                         if (selected.isNotEmpty()) selBar() else Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Mi Música", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { overlay = "audio" }) { Icon(Icons.Rounded.Usb, "Audio y USB") }
                             IconButton(onClick = { overlay = "folders" }) { Icon(Icons.Rounded.Folder, "Carpetas") }
                         }
                         val d = detail

@@ -3,10 +3,6 @@ package com.example.mimusica
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.*
-import androidx.media3.common.C
-import androidx.media3.common.audio.AudioProcessor
-import androidx.media3.common.audio.BaseAudioProcessor
-import java.nio.ByteBuffer
 import kotlin.math.*
 
 object Dsp {
@@ -31,6 +27,7 @@ object Dsp {
     var bass by mutableFloatStateOf(0f)
     var treble by mutableFloatStateOf(0f)
     var limiter by mutableStateOf(true)
+    var autoPre by mutableStateOf(true)
     var preset by mutableStateOf("Plano")
     @Volatile var version = 0
     @Volatile var level = 0f
@@ -42,7 +39,7 @@ object Dsp {
         sp = s
         enabled = s.getBoolean("on", false); preamp = s.getFloat("pre", 0f)
         toneOn = s.getBoolean("tone", false); bass = s.getFloat("bass", 0f); treble = s.getFloat("treb", 0f)
-        limiter = s.getBoolean("lim", true); preset = s.getString("preset", "Plano") ?: "Plano"
+        limiter = s.getBoolean("lim", true); autoPre = s.getBoolean("auto", true); preset = s.getString("preset", "Plano") ?: "Plano"
         (s.getString("g", "") ?: "").split(",").mapNotNull { it.toFloatOrNull() }
             .takeIf { it.size == 10 }?.forEachIndexed { i, v -> gains[i] = v }
         version++
@@ -51,7 +48,7 @@ object Dsp {
     fun persist() {
         sp?.edit()?.putBoolean("on", enabled)?.putFloat("pre", preamp)?.putBoolean("tone", toneOn)
             ?.putFloat("bass", bass)?.putFloat("treb", treble)?.putBoolean("lim", limiter)
-            ?.putString("preset", preset)?.putString("g", gains.joinToString(","))?.apply()
+            ?.putBoolean("auto", autoPre)?.putString("preset", preset)?.putString("g", gains.joinToString(","))?.apply()
     }
 
     fun commit() { version++; persist() }
@@ -117,6 +114,9 @@ object Dsp {
         return 10 * log10(max(num / den, 1e-12))
     }
 
+    /** Mayor realce (dB) de la curva: el preamp automático lo resta para no saturar. */
+    fun peakDb(): Float = max(0f, curve(64).maxOrNull() ?: 0f)
+
     fun curve(points: Int = 96): List<Float> {
         val ch = chain(44100.0)
         return List(points) { i ->
@@ -127,74 +127,3 @@ object Dsp {
     }
 }
 
-class DspProcessor : BaseAudioProcessor() {
-    private var coefs: List<Dsp.Coef> = emptyList()
-    private var st = DoubleArray(0)
-    private var ver = -1
-    private var gain = 1.0
-    private var on = false
-    private var lim = true
-    private var channels = 0
-    private var rate = 44100.0
-
-    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
-        if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) return AudioProcessor.AudioFormat.NOT_SET
-        channels = inputAudioFormat.channelCount
-        rate = inputAudioFormat.sampleRate.toDouble()
-        st = DoubleArray(channels * 12 * 4)
-        ver = -1
-        return inputAudioFormat
-    }
-
-    override fun onFlush() {
-        st = DoubleArray(channels * 12 * 4)
-        ver = -1
-    }
-
-    private fun refresh() {
-        ver = Dsp.version
-        on = Dsp.enabled
-        lim = Dsp.limiter
-        gain = 10.0.pow(Dsp.preamp / 20.0)
-        coefs = Dsp.chain(rate)
-    }
-
-    override fun queueInput(inputBuffer: ByteBuffer) {
-        val n = inputBuffer.remaining()
-        if (n == 0) return
-        val out = replaceOutputBuffer(n)
-        if (ver != Dsp.version) refresh()
-        if (!on || coefs.size != 12) {
-            var s = 0.0; var cnt = 0; var p = inputBuffer.position()
-            val end = inputBuffer.limit() - 1
-            while (p < end) { val v = inputBuffer.getShort(p) / 32768.0; s += v * v; cnt++; p += 16 }
-            if (cnt > 0) Dsp.level = min(1.0, sqrt(s / cnt) * 3.0).toFloat()
-            out.put(inputBuffer); out.flip(); return
-        }
-        val nf = 12
-        val frameBytes = 2 * channels
-        var sumSq = 0.0
-        var cnt = 0
-        while (inputBuffer.remaining() >= frameBytes) {
-            for (c in 0 until channels) {
-                var x = inputBuffer.getShort() / 32768.0 * gain
-                val base = c * nf * 4
-                for (f in 0 until nf) {
-                    val k = coefs[f]; val i = base + f * 4
-                    val y = k.b0 * x + k.b1 * st[i] + k.b2 * st[i + 1] - k.a1 * st[i + 2] - k.a2 * st[i + 3]
-                    st[i + 1] = st[i]; st[i] = x; st[i + 3] = st[i + 2]; st[i + 2] = y
-                    x = y
-                }
-                if (lim) {
-                    val a = abs(x)
-                    if (a > 0.85) x = sign(x) * (0.85 + 0.15 * tanh((a - 0.85) / 0.15))
-                }
-                val yv = x.coerceIn(-1.0, 1.0)
-                sumSq += yv * yv; cnt++
-                out.putShort((yv * 32767.0).toInt().toShort())
-            }
-        }
-        if (cnt > 0) Dsp.level = min(1.0, sqrt(sumSq / cnt) * 3.0).toFloat()
-        out.flip()
-    }
-}

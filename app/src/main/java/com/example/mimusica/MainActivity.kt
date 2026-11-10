@@ -60,6 +60,11 @@ data class Song(
 
 fun uriOf(id: Long): Uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
 
+data class RawSong(
+    val id: Long, val title: String, val artist: String, val album: String,
+    val albumId: Long, val folder: String, val added: Long
+)
+
 class MainActivity : ComponentActivity() {
     private var future: ListenableFuture<MediaController>? = null
     private var controller by mutableStateOf<MediaController?>(null)
@@ -80,9 +85,29 @@ class MainActivity : ComponentActivity() {
             if (uri != null) addFolder(uri)
         }
 
+    private val loader = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var loadGen = 0
+    private val cacheFile by lazy { java.io.File(filesDir, "songs.json") }
+
     private fun refresh() {
         granted = ContextCompat.checkSelfPermission(this, audioPerm) == PackageManager.PERMISSION_GRANTED
-        songs = if (granted) loadSongs() else emptyList()
+        val fs = folders
+        val ok = granted
+        val gen = ++loadGen
+        loader.execute {
+            if (!ok) {
+                runOnUiThread { if (gen == loadGen) songs = emptyList() }
+                return@execute
+            }
+            if (songs.isEmpty()) {
+                val cached = readCache().filter { c -> fs.any { c.folder.startsWith(it) } }.map { build(it) }
+                if (cached.isNotEmpty()) runOnUiThread { if (gen == loadGen && songs.isEmpty()) songs = cached }
+            }
+            val raws = queryRaw(fs)
+            val list = raws.map { build(it) }
+            runOnUiThread { if (gen == loadGen) songs = list }
+            writeCache(raws)
+        }
     }
 
     private fun requestPermissions() {
@@ -106,10 +131,10 @@ class MainActivity : ComponentActivity() {
         saveFolders(folders + "$path/")
     }
 
-    private fun loadSongs(): List<Song> {
-        val list = folders.toList()
+    private fun queryRaw(fs: Set<String>): List<RawSong> {
+        val list = fs.toList()
         if (list.isEmpty()) return emptyList()
-        val result = mutableListOf<Song>()
+        val result = ArrayList<RawSong>()
         val projection = arrayOf(
             MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.ALBUM,
@@ -131,24 +156,48 @@ class MainActivity : ComponentActivity() {
             val rpC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.RELATIVE_PATH)
             val daC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
             while (c.moveToNext()) {
-                val id = c.getLong(idC)
-                val title = c.getString(tC) ?: "Sin título"
-                val artist = c.getString(arC)?.takeIf { it != "<unknown>" } ?: "Artista desconocido"
-                val album = c.getString(alC) ?: "Álbum desconocido"
-                val uri = uriOf(id)
-                val art = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), c.getLong(aidC))
-                val item = MediaItem.Builder()
-                    .setMediaId(id.toString())
-                    .setUri(uri)
-                    .setMediaMetadata(
-                        MediaMetadata.Builder().setTitle(title).setArtist(artist)
-                            .setAlbumTitle(album).setArtworkUri(art).build()
-                    ).build()
-                result += Song(id, title, artist, album, uri, item, c.getString(rpC) ?: "", c.getLong(daC))
+                result += RawSong(
+                    c.getLong(idC),
+                    c.getString(tC) ?: "Sin título",
+                    c.getString(arC)?.takeIf { it != "<unknown>" } ?: "Artista desconocido",
+                    c.getString(alC) ?: "Álbum desconocido",
+                    c.getLong(aidC), c.getString(rpC) ?: "", c.getLong(daC)
+                )
             }
         }
         return result
     }
+
+    private fun build(r: RawSong): Song {
+        val uri = uriOf(r.id)
+        val art = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), r.albumId)
+        val item = MediaItem.Builder()
+            .setMediaId(r.id.toString())
+            .setUri(uri)
+            .setMediaMetadata(
+                MediaMetadata.Builder().setTitle(r.title).setArtist(r.artist)
+                    .setAlbumTitle(r.album).setArtworkUri(art).build()
+            ).build()
+        return Song(r.id, r.title, r.artist, r.album, uri, item, r.folder, r.added)
+    }
+
+    private fun writeCache(raws: List<RawSong>) {
+        runCatching {
+            val a = org.json.JSONArray()
+            raws.forEach { r ->
+                a.put(org.json.JSONArray().put(r.id).put(r.title).put(r.artist).put(r.album).put(r.albumId).put(r.folder).put(r.added))
+            }
+            cacheFile.writeText(a.toString())
+        }
+    }
+
+    private fun readCache(): List<RawSong> = runCatching {
+        val a = org.json.JSONArray(cacheFile.readText())
+        List(a.length()) { i ->
+            val r = a.getJSONArray(i)
+            RawSong(r.getLong(0), r.getString(1), r.getString(2), r.getString(3), r.getLong(4), r.getString(5), r.getLong(6))
+        }
+    }.getOrDefault(emptyList())
 
     override fun onStart() {
         super.onStart()
@@ -171,6 +220,7 @@ class MainActivity : ComponentActivity() {
         folders = sp.getStringSet("folders", emptySet())?.toSet() ?: emptySet()
         Store.init(this)
         Dsp.init(this)
+        UsbAudio.init(this)
         setContent {
             val dark = isSystemInDarkTheme()
             val ctx = LocalContext.current

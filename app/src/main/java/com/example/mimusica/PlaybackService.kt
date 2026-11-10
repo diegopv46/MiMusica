@@ -36,14 +36,17 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         Dsp.init(this)
+        UsbAudio.init(this)
         val renderers = object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(
                 context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean
-            ): AudioSink? = DefaultAudioSink.Builder(context)
-                .setEnableFloatOutput(enableFloatOutput)
-                .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                .setAudioProcessors(arrayOf(DspProcessor()))
-                .build()
+            ): AudioSink? = DspAudioSink(
+                context.applicationContext,
+                DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(true)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .build()
+            )
         }
         val player = ExoPlayer.Builder(this, renderers)
             .setAudioAttributes(
@@ -56,6 +59,7 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
         SleepTimer.player = player
+        Resume.attach(this, player)
         session = MediaSession.Builder(this, player).build()
     }
 

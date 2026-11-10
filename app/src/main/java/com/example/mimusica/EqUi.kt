@@ -136,6 +136,7 @@ fun EqScreen() {
     MaterialTheme(colorScheme = darkColorScheme()) {
         Surface(Modifier.fillMaxSize(), color = Color.Black) {
             val curve = Dsp.curve()
+            val peak = Dsp.peakDb()
             var presetMenu by remember { mutableStateOf(false) }
             var moreMenu by remember { mutableStateOf(false) }
             Column(Modifier.fillMaxSize().padding(12.dp)) {
@@ -147,6 +148,14 @@ fun EqScreen() {
                         VSlider(Dsp.preamp, -12f, 12f, { Dsp.preamp = it; Dsp.bump() }, { Dsp.persist() }, Modifier.weight(1f).fillMaxWidth())
                         Text("Preamp", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp, maxLines = 1)
                         Text(fmt1(Dsp.preamp), color = Color(0xFFB0B0B0), fontSize = 10.sp, maxLines = 1)
+                        Text(
+                            if (Dsp.autoPre) "AUTO ${fmt1(-peak)}" else "AUTO",
+                            color = if (Dsp.autoPre) Lime else Color(0xFF666669),
+                            fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false,
+                            modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(50))
+                                .clickable { Dsp.autoPre = !Dsp.autoPre; Dsp.commit() }
+                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                        )
                     }
                     Spacer(Modifier.width(8.dp))
                     Row(Modifier.weight(1f).fillMaxHeight()) {
