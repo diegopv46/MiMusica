@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -54,7 +55,7 @@ fun VSlider(value: Float, min: Float, max: Float, onChange: (Float) -> Unit, onD
     Canvas(
         modifier
             .pointerInput(min, max) {
-                val kh = 56.dp.toPx()
+                val kh = 48.dp.toPx()
                 detectVerticalDragGestures(
                     onDragStart = { cb(yToValue(it.y, size.height.toFloat(), kh, min, max)) },
                     onDragEnd = { done() },
@@ -62,20 +63,20 @@ fun VSlider(value: Float, min: Float, max: Float, onChange: (Float) -> Unit, onD
                 )
             }
             .pointerInput(min, max) {
-                val kh = 56.dp.toPx()
+                val kh = 48.dp.toPx()
                 detectTapGestures(onTap = { cb(yToValue(it.y, size.height.toFloat(), kh, min, max)); done() })
             }
     ) {
-        val kh = 56.dp.toPx()
-        val kw = 40.dp.toPx()
+        val kh = 48.dp.toPx()
+        val kw = minOf(40.dp.toPx(), size.width * 0.92f)
         val top = kh / 2
         val bot = size.height - kh / 2
         val cx = size.width / 2
         fun yOf(v: Float) = top + (max - v) / (max - min) * (bot - top)
         for (t in 0..4) {
             val y = top + (bot - top) * t / 4f
-            drawLine(Grey, Offset(cx - 22.dp.toPx(), y), Offset(cx - 14.dp.toPx(), y), 2.dp.toPx())
-            drawLine(Grey, Offset(cx + 14.dp.toPx(), y), Offset(cx + 22.dp.toPx(), y), 2.dp.toPx())
+            drawLine(Grey, Offset(cx - size.width * 0.48f, y), Offset(cx - size.width * 0.34f, y), 2.dp.toPx())
+            drawLine(Grey, Offset(cx + size.width * 0.34f, y), Offset(cx + size.width * 0.48f, y), 2.dp.toPx())
         }
         drawLine(Grey, Offset(cx, top), Offset(cx, bot), 3.dp.toPx(), StrokeCap.Round)
         val y0 = yOf(0f)
@@ -85,8 +86,8 @@ fun VSlider(value: Float, min: Float, max: Float, onChange: (Float) -> Unit, onD
             drawLine(Lime.copy(alpha = 0.22f), Offset(cx, y0), Offset(cx, y1), 16.dp.toPx(), StrokeCap.Round)
             drawLine(brush, Offset(cx, y0), Offset(cx, y1), 4.dp.toPx(), StrokeCap.Round)
         }
-        drawRoundRect(Color(0xFF26262A), Offset(cx - kw / 2, y1 - kh / 2), Size(kw, kh), CornerRadius(18.dp.toPx()))
-        drawRoundRect(Color(0xFFBDBDBD), Offset(cx - 9.dp.toPx(), y1 - 1.5.dp.toPx()), Size(18.dp.toPx(), 3.dp.toPx()), CornerRadius(2.dp.toPx()))
+        drawRoundRect(Color(0xFF26262A), Offset(cx - kw / 2, y1 - kh / 2), Size(kw, kh), CornerRadius(minOf(18.dp.toPx(), kw * 0.45f)))
+        drawRoundRect(Color(0xFFBDBDBD), Offset(cx - kw * 0.22f, y1 - 1.5.dp.toPx()), Size(kw * 0.44f, 3.dp.toPx()), CornerRadius(2.dp.toPx()))
     }
 }
 
@@ -98,7 +99,7 @@ fun Knob(label: String, value: Float, active: Boolean, onChange: (Float) -> Unit
     val ink = if (active) Color.White else Color(0xFF666669)
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Canvas(
-            Modifier.size(64.dp).pointerInput(Unit) {
+            Modifier.size(54.dp).pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragEnd = { done() },
                     onVerticalDrag = { _, dy -> cb((cur - dy * 0.3f).coerceIn(0f, 100f)) }
@@ -125,7 +126,7 @@ fun Pill(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick
         modifier.clip(shape)
             .background(if (selected) Color(0xFF2A2A2D) else Color.Transparent)
             .border(1.5.dp, if (selected) Color(0xFF2A2A2D) else Color(0xFFE0E0E0), shape)
-            .clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 12.dp),
+            .clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center
     ) { Text(text, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1) }
 }
@@ -140,30 +141,30 @@ fun EqScreen() {
             Column(Modifier.fillMaxSize().padding(12.dp)) {
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     Column(
-                        Modifier.width(76.dp).fillMaxHeight().clip(RoundedCornerShape(28.dp)).background(Color(0xFF161618)).padding(vertical = 10.dp),
+                        Modifier.width(64.dp).fillMaxHeight().clip(RoundedCornerShape(28.dp)).background(Color(0xFF161618)).padding(vertical = 10.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         VSlider(Dsp.preamp, -12f, 12f, { Dsp.preamp = it; Dsp.bump() }, { Dsp.persist() }, Modifier.weight(1f).fillMaxWidth())
-                        Text("Preamp", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-                        Text(fmt1(Dsp.preamp), color = Color(0xFFB0B0B0), style = MaterialTheme.typography.labelMedium)
+                        Text("Preamp", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp, maxLines = 1)
+                        Text(fmt1(Dsp.preamp), color = Color(0xFFB0B0B0), fontSize = 10.sp, maxLines = 1)
                     }
                     Spacer(Modifier.width(8.dp))
-                    Row(Modifier.fillMaxHeight().horizontalScroll(rememberScrollState())) {
+                    Row(Modifier.weight(1f).fillMaxHeight()) {
                         Dsp.freqs.forEachIndexed { i, f ->
-                            Column(Modifier.width(60.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
                                 VSlider(
                                     Dsp.gains[i], -12f, 12f,
                                     { Dsp.gains[i] = it; Dsp.preset = "Personalizado"; Dsp.bump() },
                                     { Dsp.persist() }, Modifier.weight(1f).fillMaxWidth()
                                 )
-                                Text(if (f >= 1000) "${f / 1000}K" else "$f", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-                                Text(fmt1(Dsp.gains[i]), color = Color(0xFFB0B0B0), style = MaterialTheme.typography.labelMedium)
+                                Text(if (f >= 1000) "${f / 1000}K" else "$f", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp, maxLines = 1, softWrap = false)
+                                Text(fmt1(Dsp.gains[i]), color = Color(0xFFB0B0B0), fontSize = 9.sp, maxLines = 1, softWrap = false)
                             }
                         }
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                Canvas(Modifier.fillMaxWidth().height(88.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xFF1A1A1C))) {
+                Canvas(Modifier.fillMaxWidth().height(72.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xFF1A1A1C))) {
                     val midY = size.height / 2
                     drawLine(Color(0xFF3A3A3E), Offset(0f, midY), Offset(size.width, midY), 1.dp.toPx())
                     val path = Path()

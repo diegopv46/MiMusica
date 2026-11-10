@@ -1,6 +1,9 @@
 package com.example.mimusica
 
 import android.graphics.Bitmap
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import kotlin.math.sin
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -60,13 +63,28 @@ fun RoundBtn(size: Dp, icon: Dp, bg: Color, tint: Color, vector: ImageVector, de
 }
 
 @Composable
-fun Waveform(seed: Long, progress: Float, modifier: Modifier, onPreview: (Float) -> Unit, onCommit: (Float) -> Unit) {
+fun Waveform(seed: Long, progress: Float, playing: Boolean, modifier: Modifier, onPreview: (Float) -> Unit, onCommit: (Float) -> Unit) {
     val bars = 56
     val heights = remember(seed) { val r = java.util.Random(seed); FloatArray(bars) { 0.2f + r.nextFloat() * 0.8f } }
     val ink = MaterialTheme.colorScheme.onSurface
     val pv by rememberUpdatedState(onPreview)
     val cm by rememberUpdatedState(onCommit)
     var last by remember { mutableFloatStateOf(0f) }
+    var phase by remember { mutableFloatStateOf(0f) }
+    var lvl by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(playing) {
+        if (playing) {
+            while (true) {
+                withFrameNanos { n ->
+                    phase = (n / 1_000_000_000.0).toFloat() * 7f
+                    lvl += (Dsp.level - lvl) * 0.25f
+                }
+            }
+        } else {
+            while (lvl > 0.01f) withFrameNanos { lvl *= 0.9f }
+            lvl = 0f
+        }
+    }
     Canvas(
         modifier
             .pointerInput(Unit) { detectTapGestures(onTap = { cm((it.x / size.width).coerceIn(0f, 1f)) }) }
@@ -78,9 +96,12 @@ fun Waveform(seed: Long, progress: Float, modifier: Modifier, onPreview: (Float)
                 )
             }
     ) {
+        val k = lvl
+        val ph = phase
         val bw = size.width / bars
         for (i in 0 until bars) {
-            val h = heights[i] * size.height
+            val wob = 0.5f + 0.5f * sin(ph + i * 0.6f)
+            val h = (heights[i] * (0.7f + 0.6f * k * wob)).coerceAtMost(1f) * size.height
             drawRoundRect(
                 if ((i + 0.5f) / bars <= progress) ink.copy(alpha = 0.9f) else ink.copy(alpha = 0.25f),
                 Offset(i * bw + bw * 0.2f, (size.height - h) / 2), Size(bw * 0.6f, h), CornerRadius(bw * 0.3f)
@@ -111,6 +132,7 @@ fun NowPlaying(
     val primary = MaterialTheme.colorScheme.primary
     val top by animateColorAsState(tint ?: surface, label = "bg")
     var drag by remember { mutableStateOf<Float?>(null) }
+    var dx by remember { mutableFloatStateOf(0f) }
     val prog = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
     val shownProg = drag ?: prog
     val artist = item?.mediaMetadata?.artist?.toString() ?: ""
@@ -121,26 +143,42 @@ fun NowPlaying(
     Column(
         Modifier.fillMaxSize()
             .background(Brush.verticalGradient(listOf(lerp(surface, top, 0.7f), surface)))
-            .statusBarsPadding().navigationBarsPadding()
-            .verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)
+            .statusBarsPadding().navigationBarsPadding().padding(horizontal = 14.dp)
     ) {
         IconButton(onClick = onBack) { Icon(Icons.Rounded.KeyboardArrowDown, "Cerrar", Modifier.size(32.dp)) }
-        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
-            Art(uri, Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)))
-            Row(Modifier.align(Alignment.BottomStart).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Glass(bg = Color.Black.copy(alpha = 0.4f), fg = Color.White, onClick = { id?.let { Store.toggleFav(it) } }) {
-                    Icon(if (isFav) Icons.Rounded.ThumbUp else Icons.Rounded.ThumbUpOffAlt, "Me gusta")
-                }
-                Glass(bg = Color.Black.copy(alpha = 0.4f), fg = Color.White, onClick = { c?.seekToNext() }) {
-                    Icon(Icons.Rounded.ThumbDownOffAlt, "No me gusta")
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val s = minOf(maxWidth, maxHeight)
+            Box(
+                Modifier.size(s)
+                    .offset { IntOffset(dx.roundToInt(), 0) }
+                    .pointerInput(c) {
+                        val th = 90.dp.toPx()
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (dx > th) c?.seekToPreviousMediaItem() else if (dx < -th) c?.seekToNextMediaItem()
+                                dx = 0f
+                            },
+                            onDragCancel = { dx = 0f },
+                            onHorizontalDrag = { _, d -> dx += d }
+                        )
+                    }
+            ) {
+                Art(uri, Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)))
+                Row(Modifier.align(Alignment.BottomStart).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Glass(bg = Color.Black.copy(alpha = 0.4f), fg = Color.White, onClick = { id?.let { Store.toggleFav(it) } }) {
+                        Icon(if (isFav) Icons.Rounded.ThumbUp else Icons.Rounded.ThumbUpOffAlt, "Me gusta")
+                    }
+                    Glass(bg = Color.Black.copy(alpha = 0.4f), fg = Color.White, onClick = { c?.seekToNext() }) {
+                        Icon(Icons.Rounded.ThumbDownOffAlt, "No me gusta")
+                    }
                 }
             }
         }
-        Spacer(Modifier.height(16.dp))
-        Glass { Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
+        Glass { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        Spacer(Modifier.height(6.dp))
         Glass { Text(if (album.isNotEmpty()) "$artist - $album" else artist, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Glass(onClick = onEq) { Icon(Icons.Rounded.GraphicEq, "Ecualizador") }
             Spacer(Modifier.width(8.dp))
@@ -161,37 +199,33 @@ fun NowPlaying(
                 Icon(Icons.Rounded.Shuffle, "Aleatorio")
             }
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             RoundBtn(44.dp, 24.dp, onSurf.copy(alpha = 0.12f), onSurf.copy(alpha = 0.7f), Icons.Rounded.Replay10, "-10 s") { c?.seekTo((position - 10_000).coerceAtLeast(0)) }
-            RoundBtn(64.dp, 34.dp, onSurf, surface, Icons.Rounded.SkipPrevious, "Anterior") { c?.seekToPrevious() }
-            RoundBtn(92.dp, 52.dp, onSurf, surface, if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pausa") {
+            RoundBtn(60.dp, 32.dp, onSurf, surface, Icons.Rounded.SkipPrevious, "Anterior") { c?.seekToPrevious() }
+            RoundBtn(84.dp, 48.dp, onSurf, surface, if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pausa") {
                 c?.let { if (it.isPlaying) it.pause() else it.play() }
             }
-            RoundBtn(64.dp, 34.dp, onSurf, surface, Icons.Rounded.SkipNext, "Siguiente") { c?.seekToNext() }
+            RoundBtn(60.dp, 32.dp, onSurf, surface, Icons.Rounded.SkipNext, "Siguiente") { c?.seekToNext() }
             RoundBtn(44.dp, 24.dp, onSurf.copy(alpha = 0.12f), onSurf.copy(alpha = 0.7f), Icons.Rounded.Forward10, "+10 s") { c?.seekTo(position + 10_000) }
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(10.dp))
         Waveform(
-            seed = id ?: 0L, progress = shownProg, modifier = Modifier.fillMaxWidth().height(64.dp),
+            seed = id ?: 0L, progress = shownProg, playing = isPlaying, modifier = Modifier.fillMaxWidth().height(52.dp),
             onPreview = { drag = it },
             onCommit = { f -> drag = null; if (duration > 0) c?.seekTo((f * duration).toLong()) }
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             listOf(fmt(if (drag != null) (drag!! * duration).toLong() else position), fmt(duration)).forEach {
-                Box(Modifier.clip(RoundedCornerShape(50)).background(onSurf).padding(horizontal = 12.dp, vertical = 4.dp)) {
+                Box(Modifier.clip(RoundedCornerShape(50)).background(onSurf).padding(horizontal = 12.dp, vertical = 3.dp)) {
                     Text(it, color = surface, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
-        if (info.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                Glass { Text(info.uppercase(), style = MaterialTheme.typography.labelMedium) }
-            }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp).height(36.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            if (info.isNotEmpty()) Glass { Text(info.uppercase(), style = MaterialTheme.typography.labelMedium) }
         }
-        Spacer(Modifier.height(16.dp))
     }
 }
 
@@ -226,7 +260,7 @@ fun BottomDock(
                 Spacer(Modifier.height(8.dp))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                listOf(Icons.Rounded.GridView, Icons.Rounded.PlaylistPlay, Icons.Rounded.QueueMusic, Icons.Rounded.Equalizer)
+                listOf(Icons.Rounded.GridView, Icons.Rounded.Search, Icons.Rounded.QueueMusic, Icons.Rounded.Equalizer)
                     .forEachIndexed { i, icon ->
                         IconButton(onClick = { onNav(i) }) {
                             Icon(icon, null, Modifier.size(if (nav == i) 32.dp else 28.dp), tint = if (nav == i) Color.White else grey)

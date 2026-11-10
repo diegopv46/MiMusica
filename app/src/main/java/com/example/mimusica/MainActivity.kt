@@ -55,7 +55,7 @@ import kotlinx.coroutines.withContext
 
 data class Song(
     val id: Long, val title: String, val artist: String, val album: String,
-    val uri: Uri, val item: MediaItem
+    val uri: Uri, val item: MediaItem, val folder: String = "", val added: Long = 0L
 )
 
 fun uriOf(id: Long): Uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
@@ -113,7 +113,8 @@ class MainActivity : ComponentActivity() {
         val projection = arrayOf(
             MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.ALBUM,
-            MediaStore.Audio.Media.ALBUM_ID
+            MediaStore.Audio.Media.ALBUM_ID, MediaStore.Audio.Media.RELATIVE_PATH,
+            MediaStore.Audio.Media.DATE_ADDED
         )
         val sel = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND (" +
             list.joinToString(" OR ") { "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?" } + ")"
@@ -127,6 +128,8 @@ class MainActivity : ComponentActivity() {
             val arC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
             val alC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
             val aidC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+            val rpC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.RELATIVE_PATH)
+            val daC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
             while (c.moveToNext()) {
                 val id = c.getLong(idC)
                 val title = c.getString(tC) ?: "Sin título"
@@ -141,7 +144,7 @@ class MainActivity : ComponentActivity() {
                         MediaMetadata.Builder().setTitle(title).setArtist(artist)
                             .setAlbumTitle(album).setArtworkUri(art).build()
                     ).build()
-                result += Song(id, title, artist, album, uri, item)
+                result += Song(id, title, artist, album, uri, item, c.getString(rpC) ?: "", c.getLong(daC))
             }
         }
         return result

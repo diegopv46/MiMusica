@@ -9,7 +9,9 @@ import android.util.LruCache
 import android.util.Size
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -107,12 +109,22 @@ fun techInfo(ctx: Context, uri: Uri): String {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SongList(list: List<Song>, currentId: String?, onPlay: (Int) -> Unit, onMenu: (Song) -> Unit) {
+fun SongList(
+    list: List<Song>, currentId: String?, selected: Set<Long>,
+    onPlay: (Int) -> Unit, onToggle: (Song) -> Unit, onMenu: (Song) -> Unit
+) {
+    val selecting = selected.isNotEmpty()
     LazyColumn(Modifier.fillMaxSize()) {
         itemsIndexed(list, key = { _, s -> s.id }) { i, s ->
+            val sel = s.id in selected
             ListItem(
-                leadingContent = { Art(s.uri, Modifier.size(52.dp)) },
+                colors = ListItemDefaults.colors(containerColor = if (sel) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent),
+                leadingContent = {
+                    if (selecting) Checkbox(checked = sel, onCheckedChange = { onToggle(s) })
+                    else Art(s.uri, Modifier.size(52.dp))
+                },
                 headlineContent = {
                     Text(
                         s.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -121,8 +133,11 @@ fun SongList(list: List<Song>, currentId: String?, onPlay: (Int) -> Unit, onMenu
                     )
                 },
                 supportingContent = { Text("${s.artist} • ${s.album}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                trailingContent = { IconButton(onClick = { onMenu(s) }) { Icon(Icons.Rounded.MoreVert, "Opciones") } },
-                modifier = Modifier.clickable { onPlay(i) }
+                trailingContent = { if (!selecting) IconButton(onClick = { onMenu(s) }) { Icon(Icons.Rounded.MoreVert, "Opciones") } },
+                modifier = Modifier.combinedClickable(
+                    onClick = { if (selecting) onToggle(s) else onPlay(i) },
+                    onLongClick = { onToggle(s) }
+                )
             )
         }
     }
@@ -132,6 +147,39 @@ fun SongList(list: List<Song>, currentId: String?, onPlay: (Int) -> Unit, onMenu
 fun MenuItem(text: String, onClick: () -> Unit) {
     TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Text(text, Modifier.fillMaxWidth(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+fun PlayRow(list: List<Song>, play: (List<Song>, Int) -> Unit, shuffle: (List<Song>) -> Unit) {
+    if (list.isEmpty()) return
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilledTonalButton(onClick = { play(list, 0) }) {
+            Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(4.dp)); Text("Reproducir")
+        }
+        OutlinedButton(onClick = { shuffle(list) }) {
+            Icon(Icons.Rounded.Shuffle, null); Spacer(Modifier.width(4.dp)); Text("Aleatorio")
+        }
+    }
+}
+
+@Composable
+fun DetailHeader(title: String, onBack: () -> Unit) {
+    Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Atrás") }
+        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+fun SelectionBar(count: Int, onClose: () -> Unit, onAll: () -> Unit, onPlay: () -> Unit, onQueue: () -> Unit, onAdd: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Cancelar") }
+        Text("$count seleccionadas", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        IconButton(onClick = onAll) { Icon(Icons.Rounded.SelectAll, "Todo") }
+        IconButton(onClick = onPlay) { Icon(Icons.Rounded.PlayArrow, "Reproducir") }
+        IconButton(onClick = onQueue) { Icon(Icons.Rounded.QueueMusic, "A la cola") }
+        IconButton(onClick = onAdd) { Icon(Icons.Rounded.PlaylistAdd, "Agregar a lista") }
     }
 }
 
@@ -146,9 +194,13 @@ fun MusicApp(
     var query by remember { mutableStateOf("") }
     var detail by remember { mutableStateOf<Pair<String, String>?>(null) }
     var plOpen by remember { mutableStateOf<String?>(null) }
+    var selected by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var menuSong by remember { mutableStateOf<Song?>(null) }
     var showTimer by remember { mutableStateOf(false) }
     var showNewPl by remember { mutableStateOf(false) }
+    var showAddTo by remember { mutableStateOf(false) }
+    var pendingAdd by remember { mutableStateOf<List<Long>>(emptyList()) }
+    var confirmDelete by remember { mutableStateOf<String?>(null) }
 
     var isPlaying by remember { mutableStateOf(false) }
     var current by remember { mutableStateOf<MediaItem?>(null) }
@@ -186,14 +238,25 @@ fun MusicApp(
             delay(500)
         }
     }
+    LaunchedEffect(nav, tab, detail, plOpen) { selected = emptySet() }
 
     BackHandler(overlay != null) { overlay = null }
-    BackHandler(overlay == null && nav == 1 && plOpen != null) { plOpen = null }
-    BackHandler(overlay == null && nav == 0 && detail != null) { detail = null }
-    BackHandler(overlay == null && nav != 0 && plOpen == null) { nav = 0 }
+    BackHandler(overlay == null && selected.isNotEmpty()) { selected = emptySet() }
+    BackHandler(overlay == null && selected.isEmpty() && nav == 0 && plOpen != null) { plOpen = null }
+    BackHandler(overlay == null && selected.isEmpty() && nav == 0 && detail != null) { detail = null }
+    BackHandler(overlay == null && selected.isEmpty() && nav != 0) { nav = 0 }
 
     val play: (List<Song>, Int) -> Unit = { l, i ->
         controller?.let { it.setMediaItems(l.map { s -> s.item }, i, 0L); it.prepare(); it.play() }
+    }
+    val playShuffle: (List<Song>) -> Unit = { l ->
+        if (l.isNotEmpty()) { controller?.shuffleModeEnabled = true; play(l, l.indices.random()) }
+    }
+    val enqueueMany: (List<Song>) -> Unit = { l ->
+        controller?.let { c ->
+            if (c.mediaItemCount == 0) { c.setMediaItems(l.map { it.item }); c.prepare(); c.play() }
+            else c.addMediaItems(l.map { it.item })
+        }
     }
     val addToQueue: (Song, Boolean) -> Unit = { s, next ->
         controller?.let {
@@ -202,9 +265,51 @@ fun MusicApp(
             else it.addMediaItem(s.item)
         }
     }
+    val toggle: (Song) -> Unit = { s -> selected = if (s.id in selected) selected - s.id else selected + s.id }
     val remainingMs = if (SleepTimer.endAt > 0) (SleepTimer.endAt - nowMs).coerceAtLeast(0L) else 0L
     val curId = current?.mediaId
-    val curUri = curId?.toLongOrNull()?.let { uriOf(it) }
+
+    val q = query.trim().lowercase()
+    val searchRes = remember(songs, q) {
+        if (q.isEmpty()) emptyList() else songs.filter {
+            it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) || it.album.lowercase().contains(q)
+        }
+    }
+    val recents = remember(songs) { songs.sortedByDescending { it.added }.take(100) }
+    val albums = remember(songs) { songs.groupBy { it.album }.toList().sortedBy { it.first.lowercase() } }
+    val artists = remember(songs) { songs.groupBy { it.artist }.toList().sortedBy { it.first.lowercase() } }
+    val folderGroups = remember(songs) { songs.groupBy { it.folder }.toList().sortedBy { it.first.lowercase() } }
+    val detailList = remember(detail, songs) {
+        detail?.let { (k, v) ->
+            songs.filter { when (k) { "album" -> it.album == v; "artist" -> it.artist == v; else -> it.folder == v } }
+        } ?: emptyList()
+    }
+    val plList = remember(plOpen, songs, Store.playlists, Store.favorites) {
+        val po = plOpen
+        if (po == null) emptyList() else {
+            val ids = if (po == FAV) Store.favorites.toList() else Store.playlists[po].orEmpty()
+            val by = songs.associateBy { it.id }
+            ids.mapNotNull { by[it] }
+        }
+    }
+    val visible: List<Song> = when {
+        nav == 1 -> searchRes
+        nav == 0 && detail != null -> detailList
+        nav == 0 && plOpen != null -> plList
+        nav == 0 && tab == 0 -> songs
+        nav == 0 && tab == 4 -> recents
+        else -> emptyList()
+    }
+    val selBar: @Composable () -> Unit = {
+        SelectionBar(
+            selected.size,
+            onClose = { selected = emptySet() },
+            onAll = { selected = visible.map { it.id }.toSet() },
+            onPlay = { val l = visible.filter { it.id in selected }; selected = emptySet(); play(l, 0) },
+            onQueue = { val l = visible.filter { it.id in selected }; selected = emptySet(); enqueueMany(l) },
+            onAdd = { showAddTo = true }
+        )
+    }
 
     if (overlay == "now") {
         NowPlaying(controller, current, isPlaying, shuffle, repeat, position, duration, remainingMs,
@@ -215,126 +320,130 @@ fun MusicApp(
         Column(Modifier.fillMaxSize().background(if (nav == 3) Color.Black else Color.Transparent)) {
             Box(Modifier.weight(1f).fillMaxWidth().statusBarsPadding()) {
                 when (nav) {
-                    0 -> {
-                        val q = query.trim().lowercase()
-                        val base = remember(songs, q) {
-                            if (q.isEmpty()) songs else songs.filter {
-                                it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) || it.album.lowercase().contains(q)
-                            }
+                    0 -> Column(Modifier.fillMaxSize()) {
+                        if (selected.isNotEmpty()) selBar() else Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Mi Música", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { overlay = "folders" }) { Icon(Icons.Rounded.Folder, "Carpetas") }
                         }
-                        val albums = remember(base) { base.groupBy { it.album }.toList().sortedBy { it.first.lowercase() } }
-                        val artists = remember(base) { base.groupBy { it.artist }.toList().sortedBy { it.first.lowercase() } }
-                        val shown = remember(detail, base) {
-                            detail?.let { (k, v) -> base.filter { if (k == "album") it.album == v else it.artist == v } } ?: base
-                        }
-                        Column(Modifier.fillMaxSize()) {
-                            Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Mi Música", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                IconButton(onClick = { overlay = "folders" }) { Icon(Icons.Rounded.Folder, "Carpetas") }
+                        val d = detail
+                        val po = plOpen
+                        if (!granted) {
+                            Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Necesito permiso para leer tu música.")
+                                Spacer(Modifier.height(12.dp))
+                                Button(onClick = onPermission) { Text("Dar permiso") }
                             }
-                            if (!granted) {
-                                Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Necesito permiso para leer tu música.")
-                                    Spacer(Modifier.height(12.dp))
-                                    Button(onClick = onPermission) { Text("Dar permiso") }
+                        } else if (folders.isEmpty()) {
+                            Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Elige la carpeta donde está tu música.")
+                                Spacer(Modifier.height(12.dp))
+                                Button(onClick = onAddFolder) { Text("Elegir carpeta") }
+                            }
+                        } else {
+                            if (d == null && po == null) {
+                                ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
+                                    listOf("Canciones", "Álbumes", "Artistas", "Carpetas", "Recientes", "Listas").forEachIndexed { i, t ->
+                                        Tab(selected = tab == i, onClick = { tab = i; detail = null; plOpen = null }, text = { Text(t) })
+                                    }
                                 }
-                            } else if (folders.isEmpty()) {
-                                Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Elige la carpeta donde está tu música.")
-                                    Spacer(Modifier.height(12.dp))
-                                    Button(onClick = onAddFolder) { Text("Elegir carpeta") }
-                                }
-                            } else {
-                                OutlinedTextField(
-                                    value = query, onValueChange = { query = it }, singleLine = true,
-                                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
-                                    placeholder = { Text("Buscar canción, artista o álbum") },
-                                    shape = RoundedCornerShape(28.dp),
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
-                                )
-                                if (detail != null) {
-                                    TextButton(onClick = { detail = null }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("← ${detail!!.second}") }
-                                    Box(Modifier.weight(1f)) { SongList(shown, curId, { play(shown, it) }, { menuSong = it }) }
-                                } else {
-                                    TabRow(selectedTabIndex = tab) {
-                                        listOf("Canciones", "Álbumes", "Artistas").forEachIndexed { i, t ->
-                                            Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) })
+                            }
+                            Box(Modifier.weight(1f).fillMaxWidth()) {
+                                if (d != null) {
+                                    Column(Modifier.fillMaxSize()) {
+                                        DetailHeader(if (d.first == "folder") d.second.trimEnd('/').substringAfterLast('/') else d.second) { detail = null }
+                                        PlayRow(detailList, play, playShuffle)
+                                        Box(Modifier.weight(1f)) { SongList(detailList, curId, selected, { play(detailList, it) }, toggle, { menuSong = it }) }
+                                    }
+                                } else if (po != null) {
+                                    Column(Modifier.fillMaxSize()) {
+                                        DetailHeader(if (po == FAV) "Favoritas" else po) { plOpen = null }
+                                        PlayRow(plList, play, playShuffle)
+                                        if (plList.isEmpty()) Text("Aún no hay canciones aquí. Selecciónalas con una pulsación larga en la biblioteca y usa “Agregar a lista”.", Modifier.padding(16.dp))
+                                        else Box(Modifier.weight(1f)) { SongList(plList, curId, selected, { play(plList, it) }, toggle, { menuSong = it }) }
+                                    }
+                                } else when (tab) {
+                                    0 -> Column(Modifier.fillMaxSize()) {
+                                        PlayRow(songs, play, playShuffle)
+                                        Box(Modifier.weight(1f)) { SongList(songs, curId, selected, { play(songs, it) }, toggle, { menuSong = it }) }
+                                    }
+                                    1 -> LazyVerticalGrid(
+                                        GridCells.Fixed(2), contentPadding = PaddingValues(12.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        gridItems(albums) { (name, list) ->
+                                            Column(Modifier.clickable { detail = "album" to name }) {
+                                                Art(list[0].uri, Modifier.fillMaxWidth().aspectRatio(1f))
+                                                Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
+                                                Text(list[0].artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                                            }
                                         }
                                     }
-                                    Box(Modifier.weight(1f)) {
-                                        when (tab) {
-                                            0 -> SongList(base, curId, { play(base, it) }, { menuSong = it })
-                                            1 -> LazyVerticalGrid(
-                                                GridCells.Fixed(2), contentPadding = PaddingValues(12.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                                            ) {
-                                                gridItems(albums) { (name, list) ->
-                                                    Column(Modifier.clickable { detail = "album" to name }) {
-                                                        Art(list[0].uri, Modifier.fillMaxWidth().aspectRatio(1f))
-                                                        Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
-                                                        Text(list[0].artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                                                    }
-                                                }
-                                            }
-                                            else -> LazyColumn(Modifier.fillMaxSize()) {
-                                                items(artists) { (name, list) ->
-                                                    ListItem(
-                                                        leadingContent = { Art(list[0].uri, Modifier.size(52.dp)) },
-                                                        headlineContent = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                                        supportingContent = { Text("${list.size} canciones") },
-                                                        modifier = Modifier.clickable { detail = "artist" to name }
-                                                    )
-                                                }
-                                            }
+                                    2 -> LazyColumn(Modifier.fillMaxSize()) {
+                                        items(artists) { (name, list) ->
+                                            ListItem(
+                                                leadingContent = { Art(list[0].uri, Modifier.size(52.dp)) },
+                                                headlineContent = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                supportingContent = { Text("${list.size} canciones") },
+                                                modifier = Modifier.clickable { detail = "artist" to name }
+                                            )
+                                        }
+                                    }
+                                    3 -> LazyColumn(Modifier.fillMaxSize()) {
+                                        items(folderGroups) { (path, list) ->
+                                            ListItem(
+                                                leadingContent = { Icon(Icons.Rounded.Folder, null) },
+                                                headlineContent = { Text(path.trimEnd('/').substringAfterLast('/').ifEmpty { "Raíz" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                supportingContent = { Text("$path • ${list.size} canciones", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                modifier = Modifier.clickable { detail = "folder" to path }
+                                            )
+                                        }
+                                    }
+                                    4 -> Column(Modifier.fillMaxSize()) {
+                                        PlayRow(recents, play, playShuffle)
+                                        Box(Modifier.weight(1f)) { SongList(recents, curId, selected, { play(recents, it) }, toggle, { menuSong = it }) }
+                                    }
+                                    else -> LazyColumn(Modifier.fillMaxSize()) {
+                                        item {
+                                            ListItem(
+                                                leadingContent = { Icon(Icons.Rounded.Add, null) },
+                                                headlineContent = { Text("Nueva lista") },
+                                                modifier = Modifier.clickable { pendingAdd = emptyList(); showNewPl = true }
+                                            )
+                                        }
+                                        item {
+                                            ListItem(
+                                                leadingContent = { Icon(Icons.Rounded.Favorite, null, tint = MaterialTheme.colorScheme.primary) },
+                                                headlineContent = { Text("Favoritas") },
+                                                supportingContent = { Text("${Store.favorites.size} canciones") },
+                                                modifier = Modifier.clickable { plOpen = FAV }
+                                            )
+                                        }
+                                        items(Store.playlists.keys.toList()) { name ->
+                                            ListItem(
+                                                leadingContent = { Icon(Icons.Rounded.PlaylistPlay, null) },
+                                                headlineContent = { Text(name) },
+                                                supportingContent = { Text("${Store.playlists[name]?.size ?: 0} canciones") },
+                                                trailingContent = { IconButton(onClick = { confirmDelete = name }) { Icon(Icons.Rounded.Delete, "Eliminar") } },
+                                                modifier = Modifier.clickable { plOpen = name }
+                                            )
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    1 -> {
-                        val byId = remember(songs) { songs.associateBy { it.id } }
-                        val open = plOpen
-                        if (open == null) {
-                            Column(Modifier.fillMaxSize()) {
-                                Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Playlists", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                    IconButton(onClick = { showNewPl = true }) { Icon(Icons.Rounded.Add, "Nueva playlist") }
-                                }
-                                LazyColumn(Modifier.fillMaxSize()) {
-                                    item {
-                                        ListItem(
-                                            leadingContent = { Icon(Icons.Rounded.Favorite, null, tint = MaterialTheme.colorScheme.primary) },
-                                            headlineContent = { Text("Favoritas") },
-                                            supportingContent = { Text("${Store.favorites.size} canciones") },
-                                            modifier = Modifier.clickable { plOpen = FAV }
-                                        )
-                                    }
-                                    items(Store.playlists.keys.toList()) { name ->
-                                        ListItem(
-                                            leadingContent = { Icon(Icons.Rounded.PlaylistPlay, null) },
-                                            headlineContent = { Text(name) },
-                                            supportingContent = { Text("${Store.playlists[name]?.size ?: 0} canciones") },
-                                            trailingContent = { IconButton(onClick = { Store.delete(name) }) { Icon(Icons.Rounded.Delete, "Eliminar") } },
-                                            modifier = Modifier.clickable { plOpen = name }
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            val ids = if (open == FAV) Store.favorites.toList() else Store.playlists[open].orEmpty()
-                            val list = ids.mapNotNull { byId[it] }
-                            Column(Modifier.fillMaxSize()) {
-                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
-                                    IconButton(onClick = { plOpen = null }) { Icon(Icons.Rounded.ArrowBack, "Atrás") }
-                                    Text(if (open == FAV) "Favoritas" else open, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (list.isNotEmpty()) FilledTonalButton(onClick = { play(list, 0) }) { Text("Reproducir") }
-                                }
-                                if (list.isEmpty()) Text("Aún no hay canciones aquí. Agrégalas desde el menú ⋮ de cada canción.", Modifier.padding(16.dp))
-                                else SongList(list, curId, { play(list, it) }, { menuSong = it })
-                            }
-                        }
+                    1 -> Column(Modifier.fillMaxSize()) {
+                        if (selected.isNotEmpty()) selBar() else Text("Buscar", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 8.dp))
+                        OutlinedTextField(
+                            value = query, onValueChange = { query = it }, singleLine = true,
+                            leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                            placeholder = { Text("Canción, artista o álbum") },
+                            shape = RoundedCornerShape(28.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+                        if (q.isEmpty()) Text("Escribe para buscar en tu música.", Modifier.padding(16.dp))
+                        else Box(Modifier.weight(1f)) { SongList(searchRes, curId, selected, { play(searchRes, it) }, toggle, { menuSong = it }) }
                     }
                     2 -> Column(Modifier.fillMaxSize()) {
                         Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -376,7 +485,23 @@ fun MusicApp(
                     MenuItem(if (s.id in Store.favorites) "Quitar de favoritas" else "Añadir a favoritas") { Store.toggleFav(s.id); menuSong = null }
                     Store.playlists.keys.forEach { n -> MenuItem("Agregar a: $n") { Store.addTo(n, s.id); menuSong = null } }
                     val po = plOpen
-                    if (nav == 1 && po != null && po != FAV) MenuItem("Quitar de esta playlist") { Store.removeFrom(po, s.id); menuSong = null }
+                    if (nav == 0 && po != null && po != FAV) MenuItem("Quitar de esta lista") { Store.removeFrom(po, s.id); menuSong = null }
+                }
+            }
+        )
+    }
+    if (showAddTo) {
+        AlertDialog(
+            onDismissRequest = { showAddTo = false },
+            title = { Text("Agregar ${selected.size} canciones a…") },
+            confirmButton = { TextButton(onClick = { showAddTo = false }) { Text("Cerrar") } },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    MenuItem("Nueva lista…") { pendingAdd = selected.toList(); showAddTo = false; showNewPl = true }
+                    MenuItem("Favoritas") { Store.addFavs(selected.toList()); selected = emptySet(); showAddTo = false }
+                    Store.playlists.keys.forEach { n ->
+                        MenuItem(n) { Store.addMany(n, selected.toList()); selected = emptySet(); showAddTo = false }
+                    }
                 }
             }
         )
@@ -385,10 +510,28 @@ fun MusicApp(
         var name by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showNewPl = false },
-            title = { Text("Nueva playlist") },
+            title = { Text("Nueva lista") },
             text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, placeholder = { Text("Nombre") }) },
-            confirmButton = { TextButton(onClick = { if (name.isNotBlank()) Store.create(name.trim()); showNewPl = false }) { Text("Crear") } },
-            dismissButton = { TextButton(onClick = { showNewPl = false }) { Text("Cancelar") } }
+            confirmButton = {
+                TextButton(onClick = {
+                    val n = name.trim()
+                    if (n.isNotEmpty()) {
+                        Store.create(n)
+                        if (pendingAdd.isNotEmpty()) { Store.addMany(n, pendingAdd); selected = emptySet() }
+                    }
+                    pendingAdd = emptyList(); showNewPl = false
+                }) { Text("Crear") }
+            },
+            dismissButton = { TextButton(onClick = { pendingAdd = emptyList(); showNewPl = false }) { Text("Cancelar") } }
+        )
+    }
+    confirmDelete?.let { n ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("¿Eliminar la lista “$n”?") },
+            text = { Text("Las canciones no se borran del teléfono.") },
+            confirmButton = { TextButton(onClick = { Store.delete(n); confirmDelete = null }) { Text("Eliminar") } },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancelar") } }
         )
     }
     if (showTimer) {

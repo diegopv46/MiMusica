@@ -33,6 +33,7 @@ object Dsp {
     var limiter by mutableStateOf(true)
     var preset by mutableStateOf("Plano")
     @Volatile var version = 0
+    @Volatile var level = 0f
     private var sp: SharedPreferences? = null
 
     fun init(ctx: Context) {
@@ -164,10 +165,16 @@ class DspProcessor : BaseAudioProcessor() {
         val out = replaceOutputBuffer(n)
         if (ver != Dsp.version) refresh()
         if (!on || coefs.size != 12) {
+            var s = 0.0; var cnt = 0; var p = inputBuffer.position()
+            val end = inputBuffer.limit() - 1
+            while (p < end) { val v = inputBuffer.getShort(p) / 32768.0; s += v * v; cnt++; p += 16 }
+            if (cnt > 0) Dsp.level = min(1.0, sqrt(s / cnt) * 3.0).toFloat()
             out.put(inputBuffer); out.flip(); return
         }
         val nf = 12
         val frameBytes = 2 * channels
+        var sumSq = 0.0
+        var cnt = 0
         while (inputBuffer.remaining() >= frameBytes) {
             for (c in 0 until channels) {
                 var x = inputBuffer.getShort() / 32768.0 * gain
@@ -182,9 +189,12 @@ class DspProcessor : BaseAudioProcessor() {
                     val a = abs(x)
                     if (a > 0.85) x = sign(x) * (0.85 + 0.15 * tanh((a - 0.85) / 0.15))
                 }
-                out.putShort((x.coerceIn(-1.0, 1.0) * 32767.0).toInt().toShort())
+                val yv = x.coerceIn(-1.0, 1.0)
+                sumSq += yv * yv; cnt++
+                out.putShort((yv * 32767.0).toInt().toShort())
             }
         }
+        if (cnt > 0) Dsp.level = min(1.0, sqrt(sumSq / cnt) * 3.0).toFloat()
         out.flip()
     }
 }

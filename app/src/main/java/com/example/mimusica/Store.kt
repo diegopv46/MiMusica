@@ -44,6 +44,11 @@ object Store {
         val l = playlists[name] ?: return
         if (id !in l) { playlists = playlists + (name to (l + id)); save() }
     }
+    fun addMany(name: String, ids: List<Long>) {
+        val l = playlists[name] ?: return
+        playlists = playlists + (name to (l + ids.filter { it !in l })); save()
+    }
+    fun addFavs(ids: List<Long>) { favorites = favorites + ids; save() }
     fun removeFrom(name: String, id: Long) {
         val l = playlists[name] ?: return
         playlists = playlists + (name to (l - id)); save()
