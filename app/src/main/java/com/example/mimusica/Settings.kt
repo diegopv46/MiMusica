@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 
 object AppPrefs {
     var theme by mutableIntStateOf(0) // 0 sistema, 1 claro, 2 oscuro
+    var stopOnClose = true
+        private set
     private var sp: SharedPreferences? = null
 
     fun init(ctx: Context) {
@@ -24,6 +26,12 @@ object AppPrefs {
         val s = ctx.getSharedPreferences("app", Context.MODE_PRIVATE)
         sp = s
         theme = s.getInt("theme", 0)
+        stopOnClose = s.getBoolean("stop", true)
+    }
+
+    fun chooseStop(v: Boolean) {
+        stopOnClose = v
+        sp?.edit()?.putBoolean("stop", v)?.apply()
     }
 
     fun chooseTheme(v: Int) {
@@ -89,6 +97,14 @@ fun SettingsScreen(onBack: () -> Unit, onOpen: (String) -> Unit) {
             headlineContent = { Text("Audio y USB") },
             supportingContent = { Text(usbInfo.ifEmpty { "Diagnóstico del DAC y modo directo" }) },
             modifier = Modifier.clickable { onOpen("audio") }
+        )
+
+        SectionTitle("Reproducción")
+        var stopOnClose by remember { mutableStateOf(AppPrefs.stopOnClose) }
+        ListItem(
+            headlineContent = { Text("Detener al cerrar la app") },
+            supportingContent = { Text("Al quitar la app de recientes, la música se detiene y desaparece la notificación.") },
+            trailingContent = { Switch(checked = stopOnClose, onCheckedChange = { stopOnClose = it; AppPrefs.chooseStop(it) }) }
         )
 
         SectionTitle("Biblioteca")

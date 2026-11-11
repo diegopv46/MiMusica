@@ -1,6 +1,7 @@
 package com.example.mimusica
 
 import android.content.Context
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
@@ -36,6 +37,7 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         Dsp.init(this)
+        AppPrefs.init(this)
         UsbAudio.init(this)
         val renderers = object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(
@@ -62,6 +64,10 @@ class PlaybackService : MediaSessionService() {
         Resume.attach(this, player)
         ReplayGain.attach(player)
         session = MediaSession.Builder(this, player).build()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (AppPrefs.stopOnClose) pauseAllPlayersAndStopSelf() else super.onTaskRemoved(rootIntent)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session

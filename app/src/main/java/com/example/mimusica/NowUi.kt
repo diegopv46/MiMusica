@@ -39,6 +39,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -252,12 +253,9 @@ fun BottomDock(
                         Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pausa", Modifier.size(32.dp), tint = Color.White)
                     }
                 }
-                LinearProgressIndicator(
-                    progress = { if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f },
-                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
-                    color = Color.White, trackColor = Color(0xFF3A3A3C)
-                )
-                Spacer(Modifier.height(8.dp))
+                MiniSeek(if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f) { f ->
+                    if (duration > 0) c?.seekTo((f * duration).toLong())
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
                 listOf(Icons.Rounded.GridView, Icons.Rounded.Search, Icons.Rounded.QueueMusic, Icons.Rounded.Equalizer)
@@ -268,5 +266,33 @@ fun BottomDock(
                     }
             }
         }
+    }
+}
+
+@Composable
+fun MiniSeek(progress: Float, onSeek: (Float) -> Unit) {
+    var drag by remember { mutableStateOf<Float?>(null) }
+    var hold by remember { mutableStateOf<Float?>(null) }
+    var last by remember { mutableFloatStateOf(0f) }
+    val cm by rememberUpdatedState(onSeek)
+    LaunchedEffect(hold) { if (hold != null) { delay(700); hold = null } }
+    val shown = drag ?: hold ?: progress
+    Canvas(
+        Modifier.fillMaxWidth().height(28.dp)
+            .pointerInput(Unit) { detectTapGestures(onTap = { val f = (it.x / size.width).coerceIn(0f, 1f); cm(f); hold = f }) }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { last = (it.x / size.width).coerceIn(0f, 1f); drag = last },
+                    onDragEnd = { cm(last); hold = last; drag = null },
+                    onDragCancel = { drag = null },
+                    onHorizontalDrag = { ch, _ -> last = (ch.position.x / size.width).coerceIn(0f, 1f); drag = last }
+                )
+            }
+    ) {
+        val y = size.height / 2
+        val h = 4.dp.toPx()
+        drawRoundRect(Color(0xFF3A3A3C), Offset(0f, y - h / 2), Size(size.width, h), CornerRadius(h / 2))
+        drawRoundRect(Color.White, Offset(0f, y - h / 2), Size(size.width * shown, h), CornerRadius(h / 2))
+        drawCircle(Color.White, radius = if (drag != null) 8.dp.toPx() else 6.dp.toPx(), center = Offset(size.width * shown, y))
     }
 }
