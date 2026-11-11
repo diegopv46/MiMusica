@@ -259,7 +259,7 @@ fun MusicApp(
         c.prepare()
     }
 
-    BackHandler(overlay != null) { overlay = null }
+    BackHandler(overlay != null) { overlay = if (overlay == "audio" || overlay == "folders") "settings" else null }
     BackHandler(overlay == null && selected.isNotEmpty()) { selected = emptySet() }
     BackHandler(overlay == null && selected.isEmpty() && nav == 0 && plOpen != null) { plOpen = null }
     BackHandler(overlay == null && selected.isEmpty() && nav == 0 && detail != null) { detail = null }
@@ -333,10 +333,12 @@ fun MusicApp(
     if (overlay == "now") {
         NowPlaying(controller, current, isPlaying, shuffle, repeat, position, duration, remainingMs,
             onBack = { overlay = null }, onEq = { overlay = null; nav = 3 }, onTimer = { showTimer = true })
+    } else if (overlay == "settings") {
+        SettingsScreen(onBack = { overlay = null }, onOpen = { overlay = it })
     } else if (overlay == "audio") {
-        AudioInfoScreen(onBack = { overlay = null })
+        AudioInfoScreen(onBack = { overlay = "settings" })
     } else if (overlay == "folders") {
-        FoldersScreen(folders, onAddFolder, onRemoveFolder, onBack = { overlay = null })
+        FoldersScreen(folders, onAddFolder, onRemoveFolder, onBack = { overlay = "settings" })
     } else {
         Column(Modifier.fillMaxSize().background(if (nav == 3) Color.Black else Color.Transparent)) {
             Box(Modifier.weight(1f).fillMaxWidth().statusBarsPadding()) {
@@ -344,8 +346,7 @@ fun MusicApp(
                     0 -> Column(Modifier.fillMaxSize()) {
                         if (selected.isNotEmpty()) selBar() else Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Mi Música", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                            IconButton(onClick = { overlay = "audio" }) { Icon(Icons.Rounded.Usb, "Audio y USB") }
-                            IconButton(onClick = { overlay = "folders" }) { Icon(Icons.Rounded.Folder, "Carpetas") }
+                            IconButton(onClick = { overlay = "settings" }) { Icon(Icons.Rounded.Settings, "Ajustes") }
                         }
                         val d = detail
                         val po = plOpen
@@ -482,7 +483,13 @@ fun MusicApp(
                                             color = if (i == curIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                                     },
                                     supportingContent = { Text(it.mediaMetadata.artist?.toString() ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    trailingContent = { IconButton(onClick = { controller?.removeMediaItem(i) }) { Icon(Icons.Rounded.Close, "Quitar") } },
+                                    trailingContent = {
+                                        Row {
+                                            IconButton(onClick = { if (i > 0) controller?.moveMediaItem(i, i - 1) }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.KeyboardArrowUp, "Subir") }
+                                            IconButton(onClick = { if (i < queue.lastIndex) controller?.moveMediaItem(i, i + 1) }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.KeyboardArrowDown, "Bajar") }
+                                            IconButton(onClick = { controller?.removeMediaItem(i) }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.Close, "Quitar") }
+                                        }
+                                    },
                                     modifier = Modifier.clickable { controller?.let { c -> c.seekToDefaultPosition(i); c.play() } }
                                 )
                             }

@@ -86,6 +86,23 @@ object UsbAudio {
         }.onFailure { status = "Error: ${it.message}" }
     }
 
+    fun offersBitPerfect(ctx: Context): Boolean? {
+        if (Build.VERSION.SDK_INT < 34) return null
+        val am = ctx.getSystemService(AudioManager::class.java)
+        val dev = device(am) ?: return null
+        return runCatching {
+            am.getSupportedMixerAttributes(dev).any { it.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT }
+        }.getOrDefault(false)
+    }
+
+    fun summary(ctx: Context): String {
+        val am = ctx.getSystemService(AudioManager::class.java)
+        val dev = device(am) ?: return "No hay DAC USB conectado."
+        if (Build.VERSION.SDK_INT < 34) return "${dev.productName}: el modo directo requiere Android 14 o superior."
+        return if (offersBitPerfect(ctx) == true) "${dev.productName} ofrece modo directo (bit-perfect)."
+        else "${dev.productName} no ofrece modo directo (bit-perfect). Puede depender del dispositivo o del teléfono."
+    }
+
     private fun encName(e: Int) = when (e) {
         AudioFormat.ENCODING_PCM_16BIT -> "PCM 16"
         AudioFormat.ENCODING_PCM_24BIT_PACKED -> "PCM 24"
@@ -131,6 +148,8 @@ object UsbAudio {
 fun AudioInfoScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     var key by remember { mutableIntStateOf(0) }
+    val canBP = remember(key) { runCatching { UsbAudio.offersBitPerfect(ctx) }.getOrNull() }
+    val summary = remember(key) { runCatching { UsbAudio.summary(ctx) }.getOrDefault("") }
     val report = remember(key) { runCatching { UsbAudio.report(ctx) }.getOrElse { "Error: ${it.message}" } }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -143,8 +162,9 @@ fun AudioInfoScreen(onBack: () -> Unit) {
         )
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Modo USB directo (bit-perfect)", Modifier.weight(1f))
-            Switch(checked = UsbAudio.enabled, onCheckedChange = { UsbAudio.setEnabled(ctx, it); key++ })
+            Switch(checked = UsbAudio.enabled, enabled = canBP == true || UsbAudio.enabled, onCheckedChange = { UsbAudio.setEnabled(ctx, it); key++ })
         }
+        Text(summary, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 4.dp))
         if (UsbAudio.status.isNotEmpty()) Text(UsbAudio.status, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 4.dp))
         OutlinedButton(onClick = { key++ }) { Text("Actualizar diagnóstico") }
         Spacer(Modifier.height(8.dp))

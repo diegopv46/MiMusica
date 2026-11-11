@@ -28,6 +28,12 @@ object Dsp {
     var treble by mutableFloatStateOf(0f)
     var limiter by mutableStateOf(true)
     var autoPre by mutableStateOf(true)
+    var outGain by mutableFloatStateOf(0f)
+    var rgMode by mutableIntStateOf(1) // 0 off, 1 pista, 2 álbum
+    @Volatile var rgTrack = Float.NaN
+    @Volatile var rgAlbum = Float.NaN
+    @Volatile var peakTrack = Float.NaN
+    @Volatile var peakAlbum = Float.NaN
     var preset by mutableStateOf("Plano")
     @Volatile var version = 0
     @Volatile var level = 0f
@@ -39,7 +45,7 @@ object Dsp {
         sp = s
         enabled = s.getBoolean("on", false); preamp = s.getFloat("pre", 0f)
         toneOn = s.getBoolean("tone", false); bass = s.getFloat("bass", 0f); treble = s.getFloat("treb", 0f)
-        limiter = s.getBoolean("lim", true); autoPre = s.getBoolean("auto", true); preset = s.getString("preset", "Plano") ?: "Plano"
+        limiter = s.getBoolean("lim", true); autoPre = s.getBoolean("auto", true); outGain = s.getFloat("out", 0f); rgMode = s.getInt("rgm", 1); preset = s.getString("preset", "Plano") ?: "Plano"
         (s.getString("g", "") ?: "").split(",").mapNotNull { it.toFloatOrNull() }
             .takeIf { it.size == 10 }?.forEachIndexed { i, v -> gains[i] = v }
         version++
@@ -48,7 +54,7 @@ object Dsp {
     fun persist() {
         sp?.edit()?.putBoolean("on", enabled)?.putFloat("pre", preamp)?.putBoolean("tone", toneOn)
             ?.putFloat("bass", bass)?.putFloat("treb", treble)?.putBoolean("lim", limiter)
-            ?.putBoolean("auto", autoPre)?.putString("preset", preset)?.putString("g", gains.joinToString(","))?.apply()
+            ?.putBoolean("auto", autoPre)?.putFloat("out", outGain)?.putInt("rgm", rgMode)?.putString("preset", preset)?.putString("g", gains.joinToString(","))?.apply()
     }
 
     fun commit() { version++; persist() }

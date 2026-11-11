@@ -43,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.compose.ui.platform.LocalView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -221,10 +223,19 @@ class MainActivity : ComponentActivity() {
         Store.init(this)
         Dsp.init(this)
         UsbAudio.init(this)
+        AppPrefs.init(this)
         setContent {
-            val dark = isSystemInDarkTheme()
+            val sysDark = isSystemInDarkTheme()
+            val dark = when (AppPrefs.theme) { 1 -> false; 2 -> true; else -> sysDark }
             val ctx = LocalContext.current
             val scheme = if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+            val view = LocalView.current
+            SideEffect {
+                val w = (view.context as android.app.Activity).window
+                val ic = WindowCompat.getInsetsController(w, view)
+                ic.isAppearanceLightStatusBars = !dark
+                ic.isAppearanceLightNavigationBars = !dark
+            }
             MaterialTheme(colorScheme = scheme) {
                 Surface(Modifier.fillMaxSize()) {
                     MusicApp(

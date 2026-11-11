@@ -94,8 +94,14 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
         ver = Dsp.version
         on = Dsp.enabled
         lim = Dsp.limiter
-        val auto = if (Dsp.autoPre) Dsp.peakDb() else 0f
-        gain = 10.0.pow((Dsp.preamp - auto) / 20.0)
+        val eqPart = if (on) Dsp.preamp - (if (Dsp.autoPre) Dsp.peakDb() else 0f) else 0f
+        val useAlbum = Dsp.rgMode == 2 && !Dsp.rgAlbum.isNaN()
+        var rg = if (Dsp.rgMode == 0) 0f else (if (useAlbum) Dsp.rgAlbum else Dsp.rgTrack)
+        val pk = if (useAlbum) Dsp.peakAlbum else Dsp.peakTrack
+        if (rg.isNaN()) rg = 0f
+        else if (rg > 0f && !pk.isNaN() && pk > 0f) rg = min(rg, -20f * log10(pk))
+        rg = rg.coerceIn(-24f, 12f)
+        gain = 10.0.pow((eqPart + Dsp.outGain + rg) / 20.0)
         coefs = Dsp.chain(rate)
     }
 
@@ -112,6 +118,7 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
         if (ver != Dsp.version) refresh()
         val nf = 12
         val doDsp = on && coefs.size == nf
+        val modify = doDsp || abs(gain - 1.0) > 1e-6
         var idx = inp.position()
         var sumSq = 0.0
         for (f in 0 until frames) {
@@ -124,10 +131,10 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
                     else -> inp.getFloat(idx).toDouble()
                 }
                 idx += bytes
-                if (doDsp) {
+                if (modify) {
                     x *= gain
                     val base = c * nf * 4
-                    for (k in 0 until nf) {
+                    for (k in 0 until (if (doDsp) nf else 0)) {
                         val q = coefs[k]
                         val i = base + k * 4
                         val y = q.b0 * x + q.b1 * st[i] + q.b2 * st[i + 1] - q.a1 * st[i + 2] - q.a2 * st[i + 3]
