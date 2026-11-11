@@ -153,6 +153,7 @@ fun AudioInfoScreen(onBack: () -> Unit) {
     var key by remember { mutableIntStateOf(0) }
     val canBP = remember(key) { runCatching { UsbAudio.offersBitPerfect(ctx) }.getOrNull() }
     val summary = remember(key) { runCatching { UsbAudio.summary(ctx) }.getOrDefault("") }
+    val system = remember(key) { runCatching { SessionLog.systemSnapshot(ctx) }.getOrElse { "error: ${it.message}" } }
     val report = remember(key) { runCatching { UsbAudio.report(ctx) }.getOrElse { "Error: ${it.message}" } }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -172,14 +173,17 @@ fun AudioInfoScreen(onBack: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { key++ }) { Text("Actualizar") }
             OutlinedButton(onClick = {
-                clip.setText(AnnotatedString("REGISTRO\n" + SessionLog.lines.joinToString("\n") + "\n\nUSB\n" + report))
+                clip.setText(AnnotatedString("COMPILACION " + SessionLog.BUILD + "\n\nSISTEMA\n" + system + "\nREGISTRO\n" + SessionLog.lines.joinToString("\n") + "\n\nUSB\n" + report))
             }) { Text("Copiar") }
             OutlinedButton(onClick = { SessionLog.clear() }) { Text("Borrar") }
         }
+        OutlinedButton(onClick = { SessionLog.testSeek(10_000); key++ }) { Text("Probar salto +10 s como el sistema") }
         Spacer(Modifier.height(8.dp))
         Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
             Text(
-                "REGISTRO DE LA SESIÓN\n" + SessionLog.lines.joinToString("\n").ifEmpty { "(vacío)" } + "\n\nDIAGNÓSTICO USB\n" + report,
+                "COMPILACIÓN: " + SessionLog.BUILD + "\n\nLO QUE VE EL SISTEMA AHORA\n" + system +
+                    "\nREGISTRO DE LA SESIÓN\n" + SessionLog.lines.joinToString("\n").ifEmpty { "(vacío)" } +
+                    "\n\nDIAGNÓSTICO USB\n" + report,
                 fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall
             )
         }
