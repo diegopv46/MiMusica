@@ -1,10 +1,12 @@
 package com.example.mimusica
 
+import android.content.Context
 import android.os.SystemClock
 import androidx.compose.runtime.mutableStateListOf
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.session.MediaSession
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -20,6 +22,26 @@ object SessionLog {
     }
 
     fun clear() = lines.clear()
+
+    /** Observa la sesión como lo hace el sistema (tarjeta de la notificación) y registra lo que recibe. */
+    fun attachSystemView(ctx: Context, session: MediaSession) {
+        runCatching {
+            val c = android.media.session.MediaController(ctx, session.platformToken)
+            var last = ""
+            c.registerCallback(object : android.media.session.MediaController.Callback() {
+                override fun onPlaybackStateChanged(state: android.media.session.PlaybackState?) {
+                    if (state == null) return
+                    val seek = (state.actions and android.media.session.PlaybackState.ACTION_SEEK_TO) != 0L
+                    val msg = "SISTEMA ve: estado=${state.state} salto=${if (seek) "SI" else "NO"} velocidad=${state.playbackSpeed}"
+                    if (msg != last) { last = msg; add(msg) }
+                }
+
+                override fun onMetadataChanged(metadata: android.media.MediaMetadata?) {
+                    add("SISTEMA ve: duración=${metadata?.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION)} ms")
+                }
+            })
+        }.onFailure { add("no pude observar la sesión: ${it.message}") }
+    }
 
     fun attach(p: Player) {
         var seekAt = 0L

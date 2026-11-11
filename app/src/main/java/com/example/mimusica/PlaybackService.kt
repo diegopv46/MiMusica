@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -29,6 +30,15 @@ object SleepTimer {
         endAt = System.currentTimeMillis() + minutes * 60_000L
         handler.postDelayed(task, minutes * 60_000L)
     }
+}
+
+/** Anuncia siempre la orden de saltar dentro de la pista, para que el control del sistema no la vea apagarse entre canciones. */
+class SeekablePlayer(p: Player) : ForwardingPlayer(p) {
+    override fun getAvailableCommands(): Player.Commands =
+        super.getAvailableCommands().buildUpon().add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM).build()
+
+    override fun isCommandAvailable(command: Int): Boolean =
+        command == Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM || super.isCommandAvailable(command)
 }
 
 class PlaybackService : MediaSessionService() {
@@ -64,7 +74,8 @@ class PlaybackService : MediaSessionService() {
         Resume.attach(this, player)
         ReplayGain.attach(player)
         SessionLog.attach(player)
-        session = MediaSession.Builder(this, player).build()
+        session = MediaSession.Builder(this, SeekablePlayer(player)).build()
+        session?.let { SessionLog.attachSystemView(this, it) }
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
