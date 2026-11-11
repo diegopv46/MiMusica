@@ -26,7 +26,7 @@ object AppPrefs {
         theme = s.getInt("theme", 0)
     }
 
-    fun setTheme(v: Int) {
+    fun chooseTheme(v: Int) {
         theme = v
         sp?.edit()?.putInt("theme", v)?.apply()
     }
@@ -53,7 +53,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpen: (String) -> Unit) {
         SectionTitle("Apariencia")
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Sistema", "Claro", "Oscuro").forEachIndexed { i, t ->
-                FilterChip(selected = AppPrefs.theme == i, onClick = { AppPrefs.setTheme(i) }, label = { Text(t) })
+                FilterChip(selected = AppPrefs.theme == i, onClick = { AppPrefs.chooseTheme(i) }, label = { Text(t) })
             }
         }
 
