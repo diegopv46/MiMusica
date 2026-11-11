@@ -63,6 +63,7 @@ class PlaybackService : MediaSessionService() {
         SleepTimer.player = player
         Resume.attach(this, player)
         ReplayGain.attach(player)
+        SessionLog.attach(player)
         session = MediaSession.Builder(this, player).build()
     }
 

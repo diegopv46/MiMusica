@@ -17,7 +17,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 
@@ -147,6 +149,7 @@ object UsbAudio {
 @Composable
 fun AudioInfoScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
+    val clip = LocalClipboardManager.current
     var key by remember { mutableIntStateOf(0) }
     val canBP = remember(key) { runCatching { UsbAudio.offersBitPerfect(ctx) }.getOrNull() }
     val summary = remember(key) { runCatching { UsbAudio.summary(ctx) }.getOrDefault("") }
@@ -166,10 +169,19 @@ fun AudioInfoScreen(onBack: () -> Unit) {
         }
         Text(summary, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 4.dp))
         if (UsbAudio.status.isNotEmpty()) Text(UsbAudio.status, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 4.dp))
-        OutlinedButton(onClick = { key++ }) { Text("Actualizar diagnóstico") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { key++ }) { Text("Actualizar") }
+            OutlinedButton(onClick = {
+                clip.setText(AnnotatedString("REGISTRO\n" + SessionLog.lines.joinToString("\n") + "\n\nUSB\n" + report))
+            }) { Text("Copiar") }
+            OutlinedButton(onClick = { SessionLog.clear() }) { Text("Borrar") }
+        }
         Spacer(Modifier.height(8.dp))
         Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-            Text(report, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            Text(
+                "REGISTRO DE LA SESIÓN\n" + SessionLog.lines.joinToString("\n").ifEmpty { "(vacío)" } + "\n\nDIAGNÓSTICO USB\n" + report,
+                fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }

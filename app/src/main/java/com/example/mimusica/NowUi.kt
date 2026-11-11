@@ -249,8 +249,14 @@ fun BottomDock(
                         Text(current.mediaMetadata.title?.toString() ?: "", color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(current.mediaMetadata.artist?.toString() ?: "", color = grey, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    IconButton(onClick = { c?.let { if (it.isPlaying) it.pause() else it.play() } }) {
-                        Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pausa", Modifier.size(32.dp), tint = Color.White)
+                    IconButton(onClick = { c?.seekToPrevious() }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Rounded.SkipPrevious, "Anterior", Modifier.size(28.dp), tint = Color.White)
+                    }
+                    IconButton(onClick = { c?.let { if (it.isPlaying) it.pause() else it.play() } }, modifier = Modifier.size(44.dp)) {
+                        Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pausa", Modifier.size(34.dp), tint = Color.White)
+                    }
+                    IconButton(onClick = { c?.seekToNext() }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Rounded.SkipNext, "Siguiente", Modifier.size(28.dp), tint = Color.White)
                     }
                 }
                 MiniSeek(if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f) { f ->
