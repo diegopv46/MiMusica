@@ -34,6 +34,7 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
     private var ring = FloatArray(0)
     private var ringHead = 0
     private var ringCount = 0
+    private var lastFade = 1f
 
     override fun configure(inputFormat: Format, specifiedBufferSize: Int, outputChannels: IntArray?) {
         val e = inputFormat.pcmEncoding
@@ -50,6 +51,7 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
         st = DoubleArray(channels * 12 * 4)
         tmp = FloatArray(channels)
         ver = -1
+        lastFade = Dsp.fadeGain()
         skip = max(0, inputFormat.encoderDelay)
         padFrames = min(20000, max(0, inputFormat.encoderPadding))
         ring = if (padFrames > 0) FloatArray(padFrames * channels) else FloatArray(0)
@@ -82,6 +84,7 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
     override fun flush() {
         pending = null; ringCount = 0; ringHead = 0
         st.fill(0.0)
+        lastFade = Dsp.fadeGain()
         super.flush()
     }
 
@@ -119,6 +122,11 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
         val nf = 12
         val doDsp = on && coefs.size == nf
         val modify = doDsp || abs(gain - 1.0) > 1e-6
+        val fg0 = lastFade
+        val fg1 = Dsp.fadeGain()
+        lastFade = fg1
+        val fgStep = if (frames > 0) (fg1 - fg0) / frames else 0f
+        val fading = fg0 < 0.999f || fg1 < 0.999f
         var idx = inp.position()
         var sumSq = 0.0
         for (f in 0 until frames) {
@@ -147,6 +155,7 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
                     }
                     x = x.coerceIn(-1.0, 1.0)
                 }
+                if (fading) x *= (fg0 + fgStep * f)
                 sumSq += x * x
                 tmp[c] = x.toFloat()
             }

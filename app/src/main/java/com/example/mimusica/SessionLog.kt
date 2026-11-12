@@ -13,7 +13,7 @@ import java.util.Locale
 
 /** Registro en memoria de lo que le pasa al reproductor (saltos, estados, errores) para diagnosticar. */
 object SessionLog {
-    const val BUILD = "entrega 13"
+    const val BUILD = "entrega 15"
     private var sys: android.media.session.MediaController? = null
     private var sysStatus = "sin iniciar"
     val lines = mutableStateListOf<String>()

@@ -134,6 +134,7 @@ fun NowPlaying(
     val top by animateColorAsState(tint ?: surface, label = "bg")
     var drag by remember { mutableStateOf<Float?>(null) }
     var dx by remember { mutableFloatStateOf(0f) }
+    var showLyrics by remember { mutableStateOf(false) }
     val prog = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
     val shownProg = drag ?: prog
     val artist = item?.mediaMetadata?.artist?.toString() ?: ""
@@ -149,7 +150,7 @@ fun NowPlaying(
         IconButton(onClick = onBack) { Icon(Icons.Rounded.KeyboardArrowDown, "Cerrar", Modifier.size(32.dp)) }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             val s = minOf(maxWidth, maxHeight)
-            Box(
+            if (showLyrics) LyricsPanel(c, item, position, duration, Modifier.fillMaxSize()) else Box(
                 Modifier.size(s)
                     .offset { IntOffset(dx.roundToInt(), 0) }
                     .pointerInput(c) {
@@ -182,6 +183,8 @@ fun NowPlaying(
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Glass(onClick = onEq) { Icon(Icons.Rounded.GraphicEq, "Ecualizador") }
+            Spacer(Modifier.width(8.dp))
+            Glass(onClick = { showLyrics = !showLyrics }, fg = if (showLyrics) primary else onSurf) { Icon(Icons.Rounded.Subject, "Letra") }
             Spacer(Modifier.width(8.dp))
             Glass(onClick = onTimer, fg = if (remainingMs > 0) primary else onSurf) {
                 Icon(Icons.Rounded.Schedule, "Temporizador")

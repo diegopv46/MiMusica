@@ -139,7 +139,20 @@ fun EqScreen() {
             val peak = Dsp.peakDb()
             var presetMenu by remember { mutableStateOf(false) }
             var moreMenu by remember { mutableStateOf(false) }
+            var saveDialog by remember { mutableStateOf(false) }
+            var newName by remember { mutableStateOf("") }
             Column(Modifier.fillMaxSize().padding(12.dp)) {
+                if (saveDialog) {
+                    AlertDialog(
+                        onDismissRequest = { saveDialog = false },
+                        title = { Text("Guardar preset") },
+                        text = { OutlinedTextField(value = newName, onValueChange = { newName = it }, singleLine = true, placeholder = { Text("Nombre (ej. Aria)") }) },
+                        confirmButton = {
+                            TextButton(onClick = { if (newName.isNotBlank()) Dsp.saveCustom(newName.trim()); newName = ""; saveDialog = false }) { Text("Guardar") }
+                        },
+                        dismissButton = { TextButton(onClick = { saveDialog = false }) { Text("Cancelar") } }
+                    )
+                }
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     Column(
                         Modifier.width(64.dp).fillMaxHeight().clip(RoundedCornerShape(28.dp)).background(Color(0xFF161618)).padding(vertical = 10.dp),
@@ -191,7 +204,7 @@ fun EqScreen() {
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     Text(
-                        "EQ 10 BANDAS", color = Color(0xFFB0B0B0), style = MaterialTheme.typography.labelSmall,
+                        "EQ 10 BANDAS" + (if (DeviceProfiles.name.isNotEmpty()) " · " + DeviceProfiles.name + (if (DeviceProfiles.profiles.containsKey(DeviceProfiles.key)) " ★" else "") else ""), maxLines = 1, color = Color(0xFFB0B0B0), style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF1C1C1E)).padding(horizontal = 14.dp, vertical = 6.dp)
                     )
                 }
@@ -211,6 +224,9 @@ fun EqScreen() {
                                     Dsp.presets.keys.forEach { n ->
                                         DropdownMenuItem(text = { Text(n) }, onClick = { Dsp.applyPreset(n); presetMenu = false })
                                     }
+                                    Dsp.customs.keys.forEach { n ->
+                                        DropdownMenuItem(text = { Text("★ $n") }, onClick = { Dsp.applyCustom(n); presetMenu = false })
+                                    }
                                 }
                             }
                             Spacer(Modifier.width(8.dp))
@@ -220,6 +236,16 @@ fun EqScreen() {
                                     modifier = Modifier.size(48.dp).border(1.5.dp, Color(0xFFE0E0E0), CircleShape)
                                 ) { Icon(Icons.Rounded.MoreVert, "Más") }
                                 DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }) {
+                                    DropdownMenuItem(text = { Text("Guardar como preset…") }, onClick = { saveDialog = true; moreMenu = false })
+                                    if (Dsp.customs.containsKey(Dsp.preset)) {
+                                        DropdownMenuItem(text = { Text("Eliminar “${Dsp.preset}”") }, onClick = { Dsp.deleteCustom(Dsp.preset); moreMenu = false })
+                                    }
+                                    if (DeviceProfiles.key.isNotEmpty()) {
+                                        DropdownMenuItem(text = { Text("Vincular este ajuste a ${DeviceProfiles.name}") }, onClick = { DeviceProfiles.bindCurrent(); moreMenu = false })
+                                        if (DeviceProfiles.profiles.containsKey(DeviceProfiles.key)) {
+                                            DropdownMenuItem(text = { Text("Quitar vínculo de ${DeviceProfiles.name}") }, onClick = { DeviceProfiles.unbindCurrent(); moreMenu = false })
+                                        }
+                                    }
                                     DropdownMenuItem(text = { Text("Restablecer todo") }, onClick = { Dsp.reset(); moreMenu = false })
                                 }
                             }

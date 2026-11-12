@@ -474,26 +474,7 @@ fun MusicApp(
                             if (queue.isNotEmpty()) TextButton(onClick = { controller?.clearMediaItems() }) { Text("Limpiar") }
                         }
                         if (queue.isEmpty()) Text("La cola está vacía. Reproduce algo o usa “Añadir a la cola” en el menú ⋮ de una canción.", Modifier.padding(16.dp))
-                        else LazyColumn(Modifier.fillMaxSize()) {
-                            itemsIndexed(queue) { i, it ->
-                                ListItem(
-                                    leadingContent = { Art(it.mediaId.toLongOrNull()?.let { id -> uriOf(id) }, Modifier.size(48.dp)) },
-                                    headlineContent = {
-                                        Text(it.mediaMetadata.title?.toString() ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                            color = if (i == curIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                                    },
-                                    supportingContent = { Text(it.mediaMetadata.artist?.toString() ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    trailingContent = {
-                                        Row {
-                                            IconButton(onClick = { if (i > 0) controller?.moveMediaItem(i, i - 1) }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.KeyboardArrowUp, "Subir") }
-                                            IconButton(onClick = { if (i < queue.lastIndex) controller?.moveMediaItem(i, i + 1) }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.KeyboardArrowDown, "Bajar") }
-                                            IconButton(onClick = { controller?.removeMediaItem(i) }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.Close, "Quitar") }
-                                        }
-                                    },
-                                    modifier = Modifier.clickable { controller?.let { c -> c.seekToDefaultPosition(i); c.play() } }
-                                )
-                            }
-                        }
+                        else QueueList(queue, curIndex, controller)
                     }
                     else -> EqScreen()
                 }

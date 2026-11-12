@@ -224,6 +224,7 @@ class MainActivity : ComponentActivity() {
         Dsp.init(this)
         UsbAudio.init(this)
         AppPrefs.init(this)
+        DeviceProfiles.start(this)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val dark = when (AppPrefs.theme) { 1 -> false; 2 -> true; else -> sysDark }

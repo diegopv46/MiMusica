@@ -35,6 +35,23 @@ object Dsp {
     @Volatile var peakTrack = Float.NaN
     @Volatile var peakAlbum = Float.NaN
     var preset by mutableStateOf("Plano")
+
+    class Custom(val gains: List<Float>, val preamp: Float, val bass: Float, val treble: Float, val tone: Boolean)
+    var customs by mutableStateOf<Map<String, Custom>>(emptyMap())
+
+    var fadeMs by mutableIntStateOf(0)
+    @Volatile var posMs = 0L
+    @Volatile var durMs = 0L
+    @Volatile var hasNext = false
+
+    /** Ganancia (0..1) del fundido: baja al final de cada pista (si hay otra después) y sube al inicio. */
+    fun fadeGain(): Float {
+        val f = fadeMs
+        if (f <= 0 || durMs <= 0) return 1f
+        val fin = (posMs.toFloat() / f).coerceIn(0f, 1f)
+        val fout = if (hasNext) ((durMs - posMs).toFloat() / f).coerceIn(0f, 1f) else 1f
+        return min(fin, fout)
+    }
     @Volatile var version = 0
     @Volatile var level = 0f
     private var sp: SharedPreferences? = null
@@ -45,16 +62,86 @@ object Dsp {
         sp = s
         enabled = s.getBoolean("on", false); preamp = s.getFloat("pre", 0f)
         toneOn = s.getBoolean("tone", false); bass = s.getFloat("bass", 0f); treble = s.getFloat("treb", 0f)
-        limiter = s.getBoolean("lim", true); autoPre = s.getBoolean("auto", true); outGain = s.getFloat("out", 0f); rgMode = s.getInt("rgm", 1); preset = s.getString("preset", "Plano") ?: "Plano"
+        limiter = s.getBoolean("lim", true); autoPre = s.getBoolean("auto", true); outGain = s.getFloat("out", 0f); rgMode = s.getInt("rgm", 1); fadeMs = s.getInt("fade", 0); preset = s.getString("preset", "Plano") ?: "Plano"
         (s.getString("g", "") ?: "").split(",").mapNotNull { it.toFloatOrNull() }
             .takeIf { it.size == 10 }?.forEachIndexed { i, v -> gains[i] = v }
+        loadCustoms(s)
         version++
+    }
+
+    private fun loadCustoms(s: SharedPreferences) {
+        runCatching {
+            val o = org.json.JSONObject(s.getString("custom", "{}") ?: "{}")
+            val m = LinkedHashMap<String, Custom>()
+            for (k in o.keys()) {
+                val e = o.getJSONObject(k)
+                val g = e.getJSONArray("g")
+                m[k] = Custom(
+                    List(10) { g.getDouble(it).toFloat() }, e.getDouble("pre").toFloat(),
+                    e.getDouble("bass").toFloat(), e.getDouble("treb").toFloat(), e.getBoolean("tone")
+                )
+            }
+            customs = m
+        }
+    }
+
+    private fun persistCustoms() {
+        val o = org.json.JSONObject()
+        customs.forEach { (k, c) ->
+            o.put(k, org.json.JSONObject()
+                .put("g", org.json.JSONArray(c.gains.map { it.toDouble() }))
+                .put("pre", c.preamp.toDouble()).put("bass", c.bass.toDouble())
+                .put("treb", c.treble.toDouble()).put("tone", c.tone))
+        }
+        sp?.edit()?.putString("custom", o.toString())?.apply()
+    }
+
+    fun snapshot(): Custom = Custom(gains.toList(), preamp, bass, treble, toneOn)
+
+    fun applySnapshot(c: Custom) {
+        c.gains.forEachIndexed { i, v -> gains[i] = v }
+        preamp = c.preamp; bass = c.bass; treble = c.treble; toneOn = c.tone
+        preset = "Perfil del dispositivo"; enabled = true
+        commit()
+    }
+
+    fun toJson(c: Custom): org.json.JSONObject = org.json.JSONObject()
+        .put("g", org.json.JSONArray(c.gains.map { it.toDouble() }))
+        .put("pre", c.preamp.toDouble()).put("bass", c.bass.toDouble())
+        .put("treb", c.treble.toDouble()).put("tone", c.tone)
+
+    fun fromJson(e: org.json.JSONObject): Custom {
+        val g = e.getJSONArray("g")
+        return Custom(
+            List(10) { g.getDouble(it).toFloat() }, e.getDouble("pre").toFloat(),
+            e.getDouble("bass").toFloat(), e.getDouble("treb").toFloat(), e.getBoolean("tone")
+        )
+    }
+
+    fun saveCustom(name: String) {
+        customs = customs + (name to Custom(gains.toList(), preamp, bass, treble, toneOn))
+        preset = name
+        persistCustoms(); persist()
+    }
+
+    fun applyCustom(name: String) {
+        val c = customs[name] ?: return
+        c.gains.forEachIndexed { i, v -> gains[i] = v }
+        preamp = c.preamp; bass = c.bass; treble = c.treble; toneOn = c.tone
+        preset = name; enabled = true
+        commit()
+    }
+
+    fun deleteCustom(name: String) {
+        customs = customs - name
+        if (preset == name) preset = "Personalizado"
+        persistCustoms(); persist()
     }
 
     fun persist() {
         sp?.edit()?.putBoolean("on", enabled)?.putFloat("pre", preamp)?.putBoolean("tone", toneOn)
             ?.putFloat("bass", bass)?.putFloat("treb", treble)?.putBoolean("lim", limiter)
-            ?.putBoolean("auto", autoPre)?.putFloat("out", outGain)?.putInt("rgm", rgMode)?.putString("preset", preset)?.putString("g", gains.joinToString(","))?.apply()
+            ?.putBoolean("auto", autoPre)?.putFloat("out", outGain)?.putInt("rgm", rgMode)?.putInt("fade", fadeMs)?.putString("preset", preset)?.putString("g", gains.joinToString(","))?.apply()
     }
 
     fun commit() { version++; persist() }
