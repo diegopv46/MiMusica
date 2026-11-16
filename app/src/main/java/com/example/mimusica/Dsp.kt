@@ -189,7 +189,7 @@ object Dsp {
     // ---------- Bandas libres ----------
     fun typeName(t: Int) = when (t) { T_PK -> "PK"; T_LS -> "LS"; T_HS -> "HS"; T_LP -> "LP"; else -> "HP" }
 
-    fun setParamMode(on: Boolean) {
+    fun chooseParamMode(on: Boolean) {
         if (on && pbands.isEmpty()) freqs.forEachIndexed { i, f -> pbands.add(PBand(T_PK, f.toFloat(), gains[i], 1.4f)) }
         paramMode = on
         preset = "Personalizado"; enabled = true

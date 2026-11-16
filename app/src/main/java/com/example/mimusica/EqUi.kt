@@ -207,9 +207,9 @@ fun EqScreen() {
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    ModeChip("Gráfico", !Dsp.paramMode) { Dsp.setParamMode(false) }
+                    ModeChip("Gráfico", !Dsp.paramMode) { Dsp.chooseParamMode(false) }
                     Spacer(Modifier.width(6.dp))
-                    ModeChip("Paramétrico", Dsp.paramMode) { Dsp.setParamMode(true) }
+                    ModeChip("Paramétrico", Dsp.paramMode) { Dsp.chooseParamMode(true) }
                     if (DeviceProfiles.name.isNotEmpty()) {
                         Spacer(Modifier.width(8.dp))
                         Text(
