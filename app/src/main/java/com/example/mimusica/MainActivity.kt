@@ -57,14 +57,16 @@ import kotlinx.coroutines.withContext
 
 data class Song(
     val id: Long, val title: String, val artist: String, val album: String,
-    val uri: Uri, val item: MediaItem, val folder: String = "", val added: Long = 0L
+    val uri: Uri, val item: MediaItem, val folder: String = "", val added: Long = 0L,
+    val genre: String = "", val year: Int = 0, val track: Int = 0, val duration: Long = 0L, val file: String = ""
 )
 
 fun uriOf(id: Long): Uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
 
 data class RawSong(
     val id: Long, val title: String, val artist: String, val album: String,
-    val albumId: Long, val folder: String, val added: Long
+    val albumId: Long, val folder: String, val added: Long,
+    val genre: String = "", val year: Int = 0, val track: Int = 0, val duration: Long = 0L, val file: String = ""
 )
 
 class MainActivity : ComponentActivity() {
@@ -137,17 +139,20 @@ class MainActivity : ComponentActivity() {
         val list = fs.toList()
         if (list.isEmpty()) return emptyList()
         val result = ArrayList<RawSong>()
-        val projection = arrayOf(
+        val cols = arrayListOf(
             MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.ALBUM_ID, MediaStore.Audio.Media.RELATIVE_PATH,
-            MediaStore.Audio.Media.DATE_ADDED
+            MediaStore.Audio.Media.DATE_ADDED, MediaStore.Audio.Media.YEAR,
+            MediaStore.Audio.Media.TRACK, MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.DISPLAY_NAME
         )
+        if (Build.VERSION.SDK_INT >= 30) cols += MediaStore.Audio.Media.GENRE
         val sel = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND (" +
             list.joinToString(" OR ") { "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?" } + ")"
         val args = list.map { "$it%" }.toTypedArray()
         contentResolver.query(
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, sel, args,
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, cols.toTypedArray(), sel, args,
             "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
         )?.use { c ->
             val idC = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
@@ -157,13 +162,23 @@ class MainActivity : ComponentActivity() {
             val aidC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
             val rpC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.RELATIVE_PATH)
             val daC = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
+            val yrC = c.getColumnIndex(MediaStore.Audio.Media.YEAR)
+            val trC = c.getColumnIndex(MediaStore.Audio.Media.TRACK)
+            val duC = c.getColumnIndex(MediaStore.Audio.Media.DURATION)
+            val fnC = c.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
+            val gnC = if (Build.VERSION.SDK_INT >= 30) c.getColumnIndex(MediaStore.Audio.Media.GENRE) else -1
             while (c.moveToNext()) {
                 result += RawSong(
                     c.getLong(idC),
                     c.getString(tC) ?: "Sin título",
                     c.getString(arC)?.takeIf { it != "<unknown>" } ?: "Artista desconocido",
                     c.getString(alC) ?: "Álbum desconocido",
-                    c.getLong(aidC), c.getString(rpC) ?: "", c.getLong(daC)
+                    c.getLong(aidC), c.getString(rpC) ?: "", c.getLong(daC),
+                    if (gnC >= 0) (c.getString(gnC) ?: "") else "",
+                    if (yrC >= 0) c.getInt(yrC) else 0,
+                    if (trC >= 0) c.getInt(trC) else 0,
+                    if (duC >= 0) c.getLong(duC) else 0L,
+                    if (fnC >= 0) (c.getString(fnC) ?: "") else ""
                 )
             }
         }
@@ -180,14 +195,17 @@ class MainActivity : ComponentActivity() {
                 MediaMetadata.Builder().setTitle(r.title).setArtist(r.artist)
                     .setAlbumTitle(r.album).setArtworkUri(art).build()
             ).build()
-        return Song(r.id, r.title, r.artist, r.album, uri, item, r.folder, r.added)
+        return Song(r.id, r.title, r.artist, r.album, uri, item, r.folder, r.added, r.genre, r.year, r.track, r.duration, r.file)
     }
 
     private fun writeCache(raws: List<RawSong>) {
         runCatching {
             val a = org.json.JSONArray()
             raws.forEach { r ->
-                a.put(org.json.JSONArray().put(r.id).put(r.title).put(r.artist).put(r.album).put(r.albumId).put(r.folder).put(r.added))
+                a.put(
+                    org.json.JSONArray().put(r.id).put(r.title).put(r.artist).put(r.album).put(r.albumId)
+                        .put(r.folder).put(r.added).put(r.genre).put(r.year).put(r.track).put(r.duration).put(r.file)
+                )
             }
             cacheFile.writeText(a.toString())
         }
@@ -197,7 +215,10 @@ class MainActivity : ComponentActivity() {
         val a = org.json.JSONArray(cacheFile.readText())
         List(a.length()) { i ->
             val r = a.getJSONArray(i)
-            RawSong(r.getLong(0), r.getString(1), r.getString(2), r.getString(3), r.getLong(4), r.getString(5), r.getLong(6))
+            RawSong(
+                r.getLong(0), r.getString(1), r.getString(2), r.getString(3), r.getLong(4), r.getString(5), r.getLong(6),
+                r.optString(7, ""), r.optInt(8, 0), r.optInt(9, 0), r.optLong(10, 0L), r.optString(11, "")
+            )
         }
     }.getOrDefault(emptyList())
 
@@ -225,6 +246,7 @@ class MainActivity : ComponentActivity() {
         UsbAudio.init(this)
         AppPrefs.init(this)
         DeviceProfiles.start(this)
+        Stats.init(this)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val dark = when (AppPrefs.theme) { 1 -> false; 2 -> true; else -> sysDark }

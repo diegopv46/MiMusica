@@ -115,6 +115,8 @@ class PlaybackService : MediaSessionService() {
             .build()
         SleepTimer.player = player
         Resume.attach(this, player)
+        Stats.init(this)
+        Stats.attach(player)
         FadeTicker.attach(player)
         ReplayGain.attach(player)
         SessionLog.attach(player)

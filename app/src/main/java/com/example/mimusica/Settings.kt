@@ -21,6 +21,7 @@ object AppPrefs {
     var stopOnClose = false
         private set
     var lyricsOnline by mutableStateOf(true)
+    var sortMode by mutableIntStateOf(0)
     private var sp: SharedPreferences? = null
 
     fun init(ctx: Context) {
@@ -30,6 +31,12 @@ object AppPrefs {
         theme = s.getInt("theme", 0)
         stopOnClose = s.getBoolean("stop", false)
         lyricsOnline = s.getBoolean("lyr", true)
+        sortMode = s.getInt("sort", 0)
+    }
+
+    fun chooseSort(v: Int) {
+        sortMode = v
+        sp?.edit()?.putInt("sort", v)?.apply()
     }
 
     fun chooseLyrics(v: Boolean) {

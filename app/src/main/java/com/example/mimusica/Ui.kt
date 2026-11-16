@@ -8,6 +8,9 @@ import android.net.Uri
 import android.util.LruCache
 import android.util.Size
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -151,7 +154,7 @@ fun MenuItem(text: String, onClick: () -> Unit) {
 }
 
 @Composable
-fun PlayRow(list: List<Song>, play: (List<Song>, Int) -> Unit, shuffle: (List<Song>) -> Unit) {
+fun PlayRow(list: List<Song>, play: (List<Song>, Int) -> Unit, shuffle: (List<Song>) -> Unit, onExport: (() -> Unit)? = null) {
     if (list.isEmpty()) return
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilledTonalButton(onClick = { play(list, 0) }) {
@@ -160,6 +163,7 @@ fun PlayRow(list: List<Song>, play: (List<Song>, Int) -> Unit, shuffle: (List<So
         OutlinedButton(onClick = { shuffle(list) }) {
             Icon(Icons.Rounded.Shuffle, null); Spacer(Modifier.width(4.dp)); Text("Aleatorio")
         }
+        if (onExport != null) IconButton(onClick = onExport) { Icon(Icons.Rounded.SaveAlt, "Exportar M3U") }
     }
 }
 
@@ -242,6 +246,28 @@ fun MusicApp(
 
     val ctx = LocalContext.current
     var restored by remember { mutableStateOf(false) }
+    var pendingExport by remember { mutableStateOf<List<Song>>(emptyList()) }
+    val m3uExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/x-mpegurl")) { uri ->
+        if (uri != null) {
+            val ok = M3u.exportTo(ctx, uri, pendingExport)
+            Toast.makeText(ctx, if (ok) "Lista exportada (${pendingExport.size} canciones)" else "No pude exportar la lista", Toast.LENGTH_LONG).show()
+        }
+    }
+    val m3uImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val (base, ids) = M3u.importFile(ctx, uri, songs)
+            if (ids.isEmpty()) {
+                Toast.makeText(ctx, "No encontré ninguna canción de esa lista en tu biblioteca", Toast.LENGTH_LONG).show()
+            } else {
+                var n = base
+                var k = 2
+                while (Store.playlists.containsKey(n)) { n = "$base ($k)"; k++ }
+                Store.create(n)
+                Store.addMany(n, ids)
+                Toast.makeText(ctx, "Lista “$n” creada con ${ids.size} canciones", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
     LaunchedEffect(controller, songs) {
         val c = controller
         if (c == null || restored || songs.isEmpty()) return@LaunchedEffect
@@ -298,24 +324,46 @@ fun MusicApp(
     val albums = remember(songs) { songs.groupBy { it.album }.toList().sortedBy { it.first.lowercase() } }
     val artists = remember(songs) { songs.groupBy { it.artist }.toList().sortedBy { it.first.lowercase() } }
     val folderGroups = remember(songs) { songs.groupBy { it.folder }.toList().sortedBy { it.first.lowercase() } }
+    val genres = remember(songs) { songs.groupBy { it.genre.ifEmpty { "Sin género" } }.toList().sortedBy { it.first.lowercase() } }
+    val years = remember(songs) { songs.groupBy { if (it.year > 0) it.year.toString() else "Sin año" }.toList().sortedByDescending { it.first.toIntOrNull() ?: -1 } }
+    val sortedSongs = remember(songs, AppPrefs.sortMode) { sortSongs(songs, AppPrefs.sortMode) }
     val detailList = remember(detail, songs) {
         detail?.let { (k, v) ->
-            songs.filter { when (k) { "album" -> it.album == v; "artist" -> it.artist == v; else -> it.folder == v } }
+            val l = songs.filter {
+                when (k) {
+                    "album" -> it.album == v
+                    "artist" -> it.artist == v
+                    "genre" -> it.genre.ifEmpty { "Sin género" } == v
+                    "year" -> (if (it.year > 0) it.year.toString() else "Sin año") == v
+                    else -> it.folder == v
+                }
+            }
+            when (k) {
+                "album" -> l.sortedWith(compareBy<Song>({ it.track }, { it.title.lowercase() }))
+                "artist" -> l.sortedWith(compareBy<Song>({ it.album.lowercase() }, { it.track }, { it.title.lowercase() }))
+                else -> l
+            }
         } ?: emptyList()
     }
-    val plList = remember(plOpen, songs, Store.playlists, Store.favorites) {
+    val plList = remember(plOpen, songs, Store.playlists, Store.favorites, Stats.plays) {
         val po = plOpen
-        if (po == null) emptyList() else {
-            val ids = if (po == FAV) Store.favorites.toList() else Store.playlists[po].orEmpty()
-            val by = songs.associateBy { it.id }
-            ids.mapNotNull { by[it] }
+        val by = songs.associateBy { it.id }
+        when (po) {
+            null -> emptyList()
+            FAV -> Store.favorites.toList().mapNotNull { by[it] }
+            AUTO_TOP -> songs.filter { (Stats.plays[it.id]?.count ?: 0) > 0 }.sortedByDescending { Stats.plays[it.id]?.count ?: 0 }.take(100)
+            AUTO_PLAYED -> songs.filter { Stats.plays.containsKey(it.id) }.sortedByDescending { Stats.plays[it.id]?.last ?: 0L }.take(100)
+            AUTO_ADDED -> recents
+            AUTO_LONG -> songs.filter { it.duration >= 6 * 60_000L }.sortedByDescending { it.duration }
+            AUTO_NEW -> songs.filter { !Stats.plays.containsKey(it.id) }
+            else -> Store.playlists[po].orEmpty().mapNotNull { by[it] }
         }
     }
     val visible: List<Song> = when {
         nav == 1 -> searchRes
         nav == 0 && detail != null -> detailList
         nav == 0 && plOpen != null -> plList
-        nav == 0 && tab == 0 -> songs
+        nav == 0 && tab == 0 -> sortedSongs
         nav == 0 && tab == 4 -> recents
         else -> emptyList()
     }
@@ -364,9 +412,10 @@ fun MusicApp(
                             }
                         } else {
                             if (d == null && po == null) {
-                                ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
-                                    listOf("Canciones", "Álbumes", "Artistas", "Carpetas", "Recientes", "Listas").forEachIndexed { i, t ->
-                                        Tab(selected = tab == i, onClick = { tab = i; detail = null; plOpen = null }, text = { Text(t) })
+                                val order = listOf(0 to "Canciones", 1 to "Álbumes", 2 to "Artistas", 6 to "Géneros", 7 to "Años", 3 to "Carpetas", 4 to "Recientes", 5 to "Listas")
+                                ScrollableTabRow(selectedTabIndex = order.indexOfFirst { it.first == tab }.coerceAtLeast(0), edgePadding = 8.dp) {
+                                    order.forEach { (id, t) ->
+                                        Tab(selected = tab == id, onClick = { tab = id; detail = null; plOpen = null }, text = { Text(t) })
                                     }
                                 }
                             }
@@ -379,15 +428,16 @@ fun MusicApp(
                                     }
                                 } else if (po != null) {
                                     Column(Modifier.fillMaxSize()) {
-                                        DetailHeader(if (po == FAV) "Favoritas" else po) { plOpen = null }
-                                        PlayRow(plList, play, playShuffle)
+                                        DetailHeader(autoTitle(po)) { plOpen = null }
+                                        PlayRow(plList, play, playShuffle, onExport = { pendingExport = plList; m3uExport.launch(safeName(autoTitle(po)) + ".m3u") })
                                         if (plList.isEmpty()) Text("Aún no hay canciones aquí. Selecciónalas con una pulsación larga en la biblioteca y usa “Agregar a lista”.", Modifier.padding(16.dp))
                                         else Box(Modifier.weight(1f)) { SongList(plList, curId, selected, { play(plList, it) }, toggle, { menuSong = it }) }
                                     }
                                 } else when (tab) {
                                     0 -> Column(Modifier.fillMaxSize()) {
-                                        PlayRow(songs, play, playShuffle)
-                                        Box(Modifier.weight(1f)) { SongList(songs, curId, selected, { play(songs, it) }, toggle, { menuSong = it }) }
+                                        SortBar()
+                                        PlayRow(sortedSongs, play, playShuffle)
+                                        Box(Modifier.weight(1f)) { SongList(sortedSongs, curId, selected, { play(sortedSongs, it) }, toggle, { menuSong = it }) }
                                     }
                                     1 -> LazyVerticalGrid(
                                         GridCells.Fixed(2), contentPadding = PaddingValues(12.dp),
@@ -426,6 +476,26 @@ fun MusicApp(
                                         PlayRow(recents, play, playShuffle)
                                         Box(Modifier.weight(1f)) { SongList(recents, curId, selected, { play(recents, it) }, toggle, { menuSong = it }) }
                                     }
+                                    6 -> LazyColumn(Modifier.fillMaxSize()) {
+                                        items(genres) { (name, list) ->
+                                            ListItem(
+                                                leadingContent = { Art(list[0].uri, Modifier.size(52.dp)) },
+                                                headlineContent = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                supportingContent = { Text("${list.size} canciones") },
+                                                modifier = Modifier.clickable { detail = "genre" to name }
+                                            )
+                                        }
+                                    }
+                                    7 -> LazyColumn(Modifier.fillMaxSize()) {
+                                        items(years) { (name, list) ->
+                                            ListItem(
+                                                leadingContent = { Art(list[0].uri, Modifier.size(52.dp)) },
+                                                headlineContent = { Text(name) },
+                                                supportingContent = { Text("${list.size} canciones") },
+                                                modifier = Modifier.clickable { detail = "year" to name }
+                                            )
+                                        }
+                                    }
                                     else -> LazyColumn(Modifier.fillMaxSize()) {
                                         item {
                                             ListItem(
@@ -440,6 +510,27 @@ fun MusicApp(
                                                 headlineContent = { Text("Favoritas") },
                                                 supportingContent = { Text("${Store.favorites.size} canciones") },
                                                 modifier = Modifier.clickable { plOpen = FAV }
+                                            )
+                                        }
+                                        items(listOf(
+                                            Triple(AUTO_TOP, Icons.Rounded.TrendingUp, "Tus canciones más escuchadas"),
+                                            Triple(AUTO_PLAYED, Icons.Rounded.History, "Lo último que has escuchado"),
+                                            Triple(AUTO_ADDED, Icons.Rounded.Schedule, "Las últimas 100 que agregaste"),
+                                            Triple(AUTO_LONG, Icons.Rounded.Timer, "De 6 minutos o más"),
+                                            Triple(AUTO_NEW, Icons.Rounded.LibraryMusic, "Que todavía no has escuchado")
+                                        )) { (key, icon, sub) ->
+                                            ListItem(
+                                                leadingContent = { Icon(icon, null) },
+                                                headlineContent = { Text(autoTitle(key)) },
+                                                supportingContent = { Text(sub) },
+                                                modifier = Modifier.clickable { plOpen = key }
+                                            )
+                                        }
+                                        item {
+                                            ListItem(
+                                                leadingContent = { Icon(Icons.Rounded.SaveAlt, null) },
+                                                headlineContent = { Text("Importar lista M3U…") },
+                                                modifier = Modifier.clickable { m3uImport.launch(arrayOf("*/*")) }
                                             )
                                         }
                                         items(Store.playlists.keys.toList()) { name ->
@@ -495,7 +586,7 @@ fun MusicApp(
                     MenuItem(if (s.id in Store.favorites) "Quitar de favoritas" else "Añadir a favoritas") { Store.toggleFav(s.id); menuSong = null }
                     Store.playlists.keys.forEach { n -> MenuItem("Agregar a: $n") { Store.addTo(n, s.id); menuSong = null } }
                     val po = plOpen
-                    if (nav == 0 && po != null && po != FAV) MenuItem("Quitar de esta lista") { Store.removeFrom(po, s.id); menuSong = null }
+                    if (nav == 0 && po != null && po != FAV && !po.startsWith("__auto")) MenuItem("Quitar de esta lista") { Store.removeFrom(po, s.id); menuSong = null }
                 }
             }
         )
