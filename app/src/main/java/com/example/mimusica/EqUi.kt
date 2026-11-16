@@ -28,8 +28,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -120,15 +122,15 @@ fun Knob(label: String, value: Float, active: Boolean, onChange: (Float) -> Unit
 }
 
 @Composable
-fun Pill(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun Pill(text: String, selected: Boolean, modifier: Modifier = Modifier, lit: Boolean = false, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     Box(
         modifier.clip(shape)
-            .background(if (selected) Color(0xFF2A2A2D) else Color.Transparent)
+            .background(if (lit) Lime else if (selected) Color(0xFF2A2A2D) else Color.Transparent)
             .border(1.5.dp, if (selected) Color(0xFF2A2A2D) else Color(0xFFE0E0E0), shape)
             .clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center
-    ) { Text(text, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1) }
+    ) { Text(text, color = if (lit) Color.Black else Color.White, fontWeight = FontWeight.Bold, maxLines = 1) }
 }
 
 @Composable
@@ -141,6 +143,8 @@ fun EqScreen() {
             var moreMenu by remember { mutableStateOf(false) }
             var saveDialog by remember { mutableStateOf(false) }
             var newName by remember { mutableStateOf("") }
+            var limLit by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) { while (true) { limLit = Dsp.limiterLit(); delay(100) } }
             Column(Modifier.fillMaxSize().padding(12.dp)) {
                 if (saveDialog) {
                     AlertDialog(
@@ -171,7 +175,7 @@ fun EqScreen() {
                         )
                     }
                     Spacer(Modifier.width(8.dp))
-                    Row(Modifier.weight(1f).fillMaxHeight()) {
+                    if (Dsp.paramMode) ParamEditor(Modifier.weight(1f).fillMaxHeight()) else Row(Modifier.weight(1f).fillMaxHeight()) {
                         Dsp.freqs.forEachIndexed { i, f ->
                             Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
                                 VSlider(
@@ -203,17 +207,24 @@ fun EqScreen() {
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    Text(
-                        "EQ 10 BANDAS" + (if (DeviceProfiles.name.isNotEmpty()) " · " + DeviceProfiles.name + (if (DeviceProfiles.profiles.containsKey(DeviceProfiles.key)) " ★" else "") else ""), maxLines = 1, color = Color(0xFFB0B0B0), style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF1C1C1E)).padding(horizontal = 14.dp, vertical = 6.dp)
-                    )
+                    ModeChip("Gráfico", !Dsp.paramMode) { Dsp.setParamMode(false) }
+                    Spacer(Modifier.width(6.dp))
+                    ModeChip("Paramétrico", Dsp.paramMode) { Dsp.setParamMode(true) }
+                    if (DeviceProfiles.name.isNotEmpty()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            DeviceProfiles.name + (if (DeviceProfiles.profiles.containsKey(DeviceProfiles.key)) " ★" else ""),
+                            color = Color(0xFFB0B0B0), style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
                 }
                 Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                     Column(Modifier.width(104.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Pill("Ecu", Dsp.enabled) { Dsp.enabled = !Dsp.enabled; Dsp.commit() }
                         Pill("Tono", Dsp.toneOn) { Dsp.toneOn = !Dsp.toneOn; Dsp.commit() }
-                        Pill("Límite", Dsp.limiter) { Dsp.limiter = !Dsp.limiter; Dsp.commit() }
+                        Pill("Límite", Dsp.limiter, lit = limLit && Dsp.limiter) { Dsp.limiter = !Dsp.limiter; Dsp.commit() }
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {

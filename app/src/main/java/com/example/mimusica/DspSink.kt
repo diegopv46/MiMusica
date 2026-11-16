@@ -36,6 +36,64 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
     private var ringCount = 0
     private var lastFade = 1f
 
+    // Limitador de picos: anticipación de ~2 ms, enlazado entre canales, liberación de ~80 ms.
+    private val limThr = 0.989f
+    private var limCh = 0
+    private var limL = 0
+    private var dl = FloatArray(0)
+    private var gh = FloatArray(0)
+    private var bh = FloatArray(0)
+    private var bSum = 0.0
+    private var gIdx = 0
+    private var bIdx = 0
+    private var dlIdx = 0
+    private var gCur = 1f
+    private var relCoef = 0.001f
+    private var minGainBuf = 1f
+
+    private fun ensureLimiter() {
+        val l = max(16, (0.002 * rate).roundToInt())
+        if (limCh == channels && limL == l && dl.isNotEmpty()) return
+        limCh = channels; limL = l
+        dl = FloatArray(l * channels)
+        gh = FloatArray(l) { 1f }
+        bh = FloatArray(l) { 1f }
+        bSum = l.toDouble(); gIdx = 0; bIdx = 0; dlIdx = 0; gCur = 1f
+        relCoef = (1.0 - exp(-1.0 / (0.08 * rate))).toFloat()
+    }
+
+    private fun resetLimiter() {
+        if (dl.isEmpty()) return
+        dl.fill(0f); gh.fill(1f); bh.fill(1f)
+        bSum = limL.toDouble(); gIdx = 0; bIdx = 0; dlIdx = 0; gCur = 1f
+    }
+
+    /** Pasa un cuadro por el limitador y lo escribe con un retardo de (L-1) cuadros. */
+    private fun emitFrame(o: ByteBuffer, fr: FloatArray, off: Int, limOn: Boolean) {
+        val ch = channels
+        var pk = 0f
+        for (c in 0 until ch) { val a = abs(fr[off + c]); if (a > pk) pk = a }
+        val req = if (limOn && pk > limThr) limThr / pk else 1f
+        gh[gIdx] = req
+        gIdx = (gIdx + 1) % limL
+        var mn = 1f
+        for (i in 0 until limL) if (gh[i] < mn) mn = gh[i]
+        bSum += (mn - bh[bIdx]).toDouble()
+        bh[bIdx] = mn
+        bIdx = (bIdx + 1) % limL
+        val gs = (bSum / limL).toFloat()
+        gCur = if (gs < gCur) gs else gCur + (gs - gCur) * relCoef
+        val p = dlIdx
+        for (c in 0 until ch) dl[p * ch + c] = fr[off + c]
+        val q = (p + 1) % limL
+        for (c in 0 until ch) {
+            val y = dl[q * ch + c] * gCur
+            o.putFloat(if (y > 1f) 1f else if (y < -1f) -1f else y)
+        }
+        dlIdx = q
+        if (gCur < minGainBuf) minGainBuf = gCur
+    }
+
     override fun configure(inputFormat: Format, specifiedBufferSize: Int, outputChannels: IntArray?) {
         val e = inputFormat.pcmEncoding
         active = MimeTypes.AUDIO_RAW == inputFormat.sampleMimeType &&
@@ -48,8 +106,9 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
         enc = e
         channels = inputFormat.channelCount
         rate = inputFormat.sampleRate.toDouble()
-        st = DoubleArray(channels * 12 * 4)
+        st = DoubleArray(channels * Dsp.MAX_FILTERS * 4)
         tmp = FloatArray(channels)
+        ensureLimiter()
         ver = -1
         lastFade = Dsp.fadeGain()
         skip = max(0, inputFormat.encoderDelay)
@@ -85,11 +144,13 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
         pending = null; ringCount = 0; ringHead = 0
         st.fill(0.0)
         lastFade = Dsp.fadeGain()
+        resetLimiter()
         super.flush()
     }
 
     override fun reset() {
         pending = null; ringCount = 0; ringHead = 0
+        resetLimiter()
         super.reset()
     }
 
@@ -119,14 +180,16 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
         else ByteBuffer.allocateDirect(need + 8192).order(ByteOrder.nativeOrder()).also { scratch = it }
         o.clear()
         if (ver != Dsp.version) refresh()
-        val nf = 12
-        val doDsp = on && coefs.size == nf
+        val nf = coefs.size
+        val doDsp = on && nf > 0
         val modify = doDsp || abs(gain - 1.0) > 1e-6
         val fg0 = lastFade
         val fg1 = Dsp.fadeGain()
         lastFade = fg1
         val fgStep = if (frames > 0) (fg1 - fg0) / frames else 0f
         val fading = fg0 < 0.999f || fg1 < 0.999f
+        val limOn = lim && modify
+        minGainBuf = 1f
         var idx = inp.position()
         var sumSq = 0.0
         for (f in 0 until frames) {
@@ -141,7 +204,7 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
                 idx += bytes
                 if (modify) {
                     x *= gain
-                    val base = c * nf * 4
+                    val base = c * Dsp.MAX_FILTERS * 4
                     for (k in 0 until (if (doDsp) nf else 0)) {
                         val q = coefs[k]
                         val i = base + k * 4
@@ -149,11 +212,6 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
                         st[i + 1] = st[i]; st[i] = x; st[i + 3] = st[i + 2]; st[i + 2] = y
                         x = y
                     }
-                    if (lim) {
-                        val a = abs(x)
-                        if (a > 0.85) x = sign(x) * (0.85 + 0.15 * tanh((a - 0.85) / 0.15))
-                    }
-                    x = x.coerceIn(-1.0, 1.0)
                 }
                 if (fading) x *= (fg0 + fgStep * f)
                 sumSq += x * x
@@ -163,7 +221,8 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
             if (padFrames > 0) {
                 if (ringCount == padFrames) {
                     val b = ringHead * ch
-                    for (c in 0 until ch) { o.putFloat(ring[b + c]); ring[b + c] = tmp[c] }
+                    emitFrame(o, ring, b, limOn)
+                    for (c in 0 until ch) ring[b + c] = tmp[c]
                     ringHead = (ringHead + 1) % padFrames
                 } else {
                     val b = ((ringHead + ringCount) % padFrames) * ch
@@ -171,9 +230,10 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
                     ringCount++
                 }
             } else {
-                for (c in 0 until ch) o.putFloat(tmp[c])
+                emitFrame(o, tmp, 0, limOn)
             }
         }
+        if (minGainBuf < 0.995f) Dsp.noteLimit()
         if (frames > 0) Dsp.level = min(1.0, sqrt(sumSq / (frames * ch)) * 3.0).toFloat()
         inp.position(idx)
         o.flip()
