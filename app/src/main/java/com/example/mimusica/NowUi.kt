@@ -52,7 +52,7 @@ fun Glass(
     var m = Modifier.clip(RoundedCornerShape(50)).background(bg)
     if (onClick != null) m = m.clickable(onClick = onClick)
     CompositionLocalProvider(LocalContentColor provides fg) {
-        Row(m.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, content = content)
+        Row(m.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, content = content)
     }
 }
 
@@ -135,6 +135,8 @@ fun NowPlaying(
     var drag by remember { mutableStateOf<Float?>(null) }
     var dx by remember { mutableFloatStateOf(0f) }
     var showLyrics by remember { mutableStateOf(false) }
+    var showSpectrum by remember { mutableStateOf(false) }
+    var showInfo by remember { mutableStateOf(false) }
     val prog = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
     val shownProg = drag ?: prog
     val artist = item?.mediaMetadata?.artist?.toString() ?: ""
@@ -150,7 +152,9 @@ fun NowPlaying(
         IconButton(onClick = onBack) { Icon(Icons.Rounded.KeyboardArrowDown, "Cerrar", Modifier.size(32.dp)) }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             val s = minOf(maxWidth, maxHeight)
-            if (showLyrics) LyricsPanel(c, item, position, duration, Modifier.fillMaxSize()) else Box(
+            if (showLyrics) LyricsPanel(c, item, position, duration, Modifier.fillMaxSize())
+            else if (showSpectrum) SpectrumPanel(isPlaying, Modifier.fillMaxSize())
+            else Box(
                 Modifier.size(s)
                     .offset { IntOffset(dx.roundToInt(), 0) }
                     .pointerInput(c) {
@@ -184,11 +188,13 @@ fun NowPlaying(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Glass(onClick = onEq) { Icon(Icons.Rounded.GraphicEq, "Ecualizador") }
             Spacer(Modifier.width(8.dp))
-            Glass(onClick = { showLyrics = !showLyrics }, fg = if (showLyrics) primary else onSurf) { Icon(Icons.Rounded.Subject, "Letra") }
+            Glass(onClick = { showLyrics = !showLyrics; if (showLyrics) showSpectrum = false }, fg = if (showLyrics) primary else onSurf) { Icon(Icons.Rounded.Subject, "Letra") }
+            Spacer(Modifier.width(8.dp))
+            Glass(onClick = { showSpectrum = !showSpectrum; if (showSpectrum) showLyrics = false }, fg = if (showSpectrum) primary else onSurf) { Icon(Icons.Rounded.BarChart, "Espectro") }
             Spacer(Modifier.width(8.dp))
             Glass(onClick = onTimer, fg = if (remainingMs > 0) primary else onSurf) {
                 Icon(Icons.Rounded.Schedule, "Temporizador")
-                if (remainingMs > 0) Text("  ${remainingMs / 60000 + 1} min", style = MaterialTheme.typography.labelMedium)
+                if (remainingMs > 0) Text(" ${remainingMs / 60000 + 1}m", style = MaterialTheme.typography.labelMedium)
             }
             Spacer(Modifier.weight(1f))
             Glass(fg = if (repeat == Player.REPEAT_MODE_OFF) onSurf else primary, onClick = {
@@ -228,8 +234,9 @@ fun NowPlaying(
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp).height(36.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            if (info.isNotEmpty()) Glass { Text(info.uppercase(), style = MaterialTheme.typography.labelMedium) }
+            if (info.isNotEmpty()) Glass(onClick = { showInfo = true }) { Text(info.uppercase(), style = MaterialTheme.typography.labelMedium) }
         }
+        if (showInfo) AudioInfoDialog(info, title) { showInfo = false }
     }
 }
 

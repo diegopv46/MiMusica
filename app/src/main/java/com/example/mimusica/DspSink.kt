@@ -106,6 +106,13 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
         enc = e
         channels = inputFormat.channelCount
         rate = inputFormat.sampleRate.toDouble()
+        Dsp.srcRate = inputFormat.sampleRate
+        Dsp.srcDesc = when (e) {
+            C.ENCODING_PCM_16BIT -> "PCM 16 bits"
+            C.ENCODING_PCM_24BIT -> "PCM 24 bits"
+            C.ENCODING_PCM_32BIT -> "PCM 32 bits"
+            else -> "PCM float"
+        } + " · ${inputFormat.sampleRate} Hz · ${inputFormat.channelCount} canales"
         st = DoubleArray(channels * Dsp.MAX_FILTERS * 4)
         tmp = FloatArray(channels)
         ensureLimiter()
@@ -217,6 +224,7 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
                 sumSq += x * x
                 tmp[c] = x.toFloat()
             }
+            Spectrum.push(if (ch > 1) (tmp[0] + tmp[1]) * 0.5f else tmp[0])
             if (skip > 0) { skip--; continue }
             if (padFrames > 0) {
                 if (ringCount == padFrames) {
@@ -233,6 +241,8 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
                 emitFrame(o, tmp, 0, limOn)
             }
         }
+        Spectrum.rate = rate.toInt()
+        Spectrum.analyze()
         if (minGainBuf < 0.995f) Dsp.noteLimit()
         if (frames > 0) Dsp.level = min(1.0, sqrt(sumSq / (frames * ch)) * 3.0).toFloat()
         inp.position(idx)

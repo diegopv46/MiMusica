@@ -142,10 +142,28 @@ fun EqScreen() {
             var presetMenu by remember { mutableStateOf(false) }
             var moreMenu by remember { mutableStateOf(false) }
             var saveDialog by remember { mutableStateOf(false) }
+            var toneDialog by remember { mutableStateOf(false) }
             var newName by remember { mutableStateOf("") }
             var limLit by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) { while (true) { limLit = Dsp.limiterLit(); delay(100) } }
             Column(Modifier.fillMaxSize().padding(12.dp)) {
+                if (toneDialog) {
+                    AlertDialog(
+                        onDismissRequest = { toneDialog = false },
+                        title = { Text("Ajustes de tono") },
+                        text = {
+                            Column {
+                                Text("Graves: ${Dsp.bassFreq.roundToInt()} Hz")
+                                Slider(value = Dsp.bassFreq, valueRange = 20f..250f, onValueChange = { Dsp.bassFreq = it; Dsp.version++ }, onValueChangeFinished = { Dsp.persist() })
+                                Text("Agudos: ${Dsp.trebleFreq.roundToInt()} Hz")
+                                Slider(value = Dsp.trebleFreq, valueRange = 5000f..15000f, onValueChange = { Dsp.trebleFreq = it; Dsp.version++ }, onValueChangeFinished = { Dsp.persist() })
+                                Text("Q: ${"%.2f".format(Dsp.toneQ)}")
+                                Slider(value = Dsp.toneQ, valueRange = 0.1f..2f, onValueChange = { Dsp.toneQ = it; Dsp.version++ }, onValueChangeFinished = { Dsp.persist() })
+                            }
+                        },
+                        confirmButton = { TextButton(onClick = { toneDialog = false }) { Text("Listo") } }
+                    )
+                }
                 if (saveDialog) {
                     AlertDialog(
                         onDismissRequest = { saveDialog = false },
@@ -213,7 +231,7 @@ fun EqScreen() {
                     if (DeviceProfiles.name.isNotEmpty()) {
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            DeviceProfiles.name + (if (DeviceProfiles.profiles.containsKey(DeviceProfiles.key)) " ★" else ""),
+                            DeviceProfiles.name + (if (DeviceProfiles.active.isNotEmpty()) " ★ " + DeviceProfiles.active else ""),
                             color = Color(0xFFB0B0B0), style = MaterialTheme.typography.labelSmall,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false)
                         )
@@ -248,13 +266,24 @@ fun EqScreen() {
                                 ) { Icon(Icons.Rounded.MoreVert, "Más") }
                                 DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }) {
                                     DropdownMenuItem(text = { Text("Guardar como preset…") }, onClick = { saveDialog = true; moreMenu = false })
+                                    DropdownMenuItem(text = { Text("Ajustes de tono…") }, onClick = { toneDialog = true; moreMenu = false })
                                     if (Dsp.customs.containsKey(Dsp.preset)) {
                                         DropdownMenuItem(text = { Text("Eliminar “${Dsp.preset}”") }, onClick = { Dsp.deleteCustom(Dsp.preset); moreMenu = false })
                                     }
+                                    if (DeviceProfiles.currentSong != 0L) {
+                                        DropdownMenuItem(text = { Text("Vincular este ajuste a esta canción") }, onClick = { DeviceProfiles.bindSong(); moreMenu = false })
+                                        if (DeviceProfiles.songProfiles.containsKey(DeviceProfiles.currentSong)) {
+                                            DropdownMenuItem(text = { Text("Quitar vínculo de la canción") }, onClick = { DeviceProfiles.unbindSong(); moreMenu = false })
+                                        }
+                                    }
                                     if (DeviceProfiles.key.isNotEmpty()) {
-                                        DropdownMenuItem(text = { Text("Vincular este ajuste a ${DeviceProfiles.name}") }, onClick = { DeviceProfiles.bindCurrent(); moreMenu = false })
+                                        DropdownMenuItem(text = { Text("Vincular a ${DeviceProfiles.name}") }, onClick = { DeviceProfiles.bindDevice(); moreMenu = false })
                                         if (DeviceProfiles.profiles.containsKey(DeviceProfiles.key)) {
-                                            DropdownMenuItem(text = { Text("Quitar vínculo de ${DeviceProfiles.name}") }, onClick = { DeviceProfiles.unbindCurrent(); moreMenu = false })
+                                            DropdownMenuItem(text = { Text("Quitar vínculo de ${DeviceProfiles.name}") }, onClick = { DeviceProfiles.unbindDevice(); moreMenu = false })
+                                        }
+                                        DropdownMenuItem(text = { Text("Vincular a toda salida «${DeviceProfiles.typeKey}»") }, onClick = { DeviceProfiles.bindType(); moreMenu = false })
+                                        if (DeviceProfiles.typeProfiles.containsKey(DeviceProfiles.typeKey)) {
+                                            DropdownMenuItem(text = { Text("Quitar vínculo de la salida «${DeviceProfiles.typeKey}»") }, onClick = { DeviceProfiles.unbindType(); moreMenu = false })
                                         }
                                     }
                                     DropdownMenuItem(text = { Text("Restablecer todo") }, onClick = { Dsp.reset(); moreMenu = false })

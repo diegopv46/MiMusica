@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -117,6 +118,20 @@ class PlaybackService : MediaSessionService() {
         Resume.attach(this, player)
         Stats.init(this)
         Stats.attach(player)
+        player.addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { DeviceProfiles.onTrack(mediaItem?.mediaId) }
+        })
+        WidgetUi.live = player
+        player.addListener(object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (events.containsAny(
+                        Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_IS_PLAYING_CHANGED,
+                        Player.EVENT_MEDIA_METADATA_CHANGED, Player.EVENT_PLAYBACK_STATE_CHANGED,
+                        Player.EVENT_TIMELINE_CHANGED
+                    )
+                ) WidgetUi.refresh(this@PlaybackService, player)
+            }
+        })
         FadeTicker.attach(player)
         ReplayGain.attach(player)
         SessionLog.attach(player)
@@ -138,6 +153,33 @@ class PlaybackService : MediaSessionService() {
         session?.let { SessionLog.attachSystemView(this, it) }
     }
 
+    /** Si no hay nada cargado (el servicio se reinició), recarga la última cola guardada. */
+    private fun restoreIfEmpty(p: Player) {
+        if (p.mediaItemCount > 0) return
+        val r = Resume.load(this) ?: return
+        val ids = r.ids.mapNotNull { it.toLongOrNull() }
+        if (ids.isEmpty()) return
+        val curId = r.ids.getOrNull(r.index)?.toLongOrNull()
+        val items = ids.map { MediaItem.Builder().setMediaId(it.toString()).setUri(uriOf(it)).build() }
+        p.shuffleModeEnabled = r.shuffle
+        p.repeatMode = r.repeat
+        p.setMediaItems(items, ids.indexOf(curId).coerceAtLeast(0), r.pos)
+        p.prepare()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val result = super.onStartCommand(intent, flags, startId)
+        val p = session?.player
+        if (p != null) {
+            when (intent?.action) {
+                WidgetUi.ACT_PLAY -> { restoreIfEmpty(p); if (p.isPlaying) p.pause() else p.play() }
+                WidgetUi.ACT_NEXT -> p.seekToNext()
+                WidgetUi.ACT_PREV -> p.seekToPrevious()
+            }
+        }
+        return result
+    }
+
     override fun onTaskRemoved(rootIntent: Intent?) {
         if (AppPrefs.stopOnClose) pauseAllPlayersAndStopSelf() else super.onTaskRemoved(rootIntent)
     }
@@ -152,6 +194,8 @@ class PlaybackService : MediaSessionService() {
             release()
         }
         session = null
+        WidgetUi.live = null
+        WidgetUi.refresh(this, null)
         super.onDestroy()
     }
 }

@@ -27,6 +27,9 @@ object Dsp {
     var toneOn by mutableStateOf(false)
     var bass by mutableFloatStateOf(0f)
     var treble by mutableFloatStateOf(0f)
+    var bassFreq by mutableFloatStateOf(120f)
+    var trebleFreq by mutableFloatStateOf(8000f)
+    var toneQ by mutableFloatStateOf(0.71f)
     var limiter by mutableStateOf(true)
     var autoPre by mutableStateOf(true)
     var outGain by mutableFloatStateOf(0f)
@@ -72,6 +75,8 @@ object Dsp {
     }
     @Volatile var version = 0
     @Volatile var level = 0f
+    @Volatile var srcDesc = ""
+    @Volatile var srcRate = 0
     @Volatile var latencyMs = 200L
     private val evt = LongArray(64)
     @Volatile private var evtIdx = 0
@@ -96,7 +101,7 @@ object Dsp {
         sp = s
         enabled = s.getBoolean("on", false); preamp = s.getFloat("pre", 0f)
         toneOn = s.getBoolean("tone", false); bass = s.getFloat("bass", 0f); treble = s.getFloat("treb", 0f)
-        limiter = s.getBoolean("lim", true); autoPre = s.getBoolean("auto", true); outGain = s.getFloat("out", 0f); rgMode = s.getInt("rgm", 1); fadeMs = s.getInt("fade", 0); preset = s.getString("preset", "Plano") ?: "Plano"
+        limiter = s.getBoolean("lim", true); autoPre = s.getBoolean("auto", true); outGain = s.getFloat("out", 0f); rgMode = s.getInt("rgm", 1); fadeMs = s.getInt("fade", 0); bassFreq = s.getFloat("bf", 120f); trebleFreq = s.getFloat("tf", 8000f); toneQ = s.getFloat("tq", 0.71f); preset = s.getString("preset", "Plano") ?: "Plano"
         (s.getString("g", "") ?: "").split(",").mapNotNull { it.toFloatOrNull() }
             .takeIf { it.size == 10 }?.forEachIndexed { i, v -> gains[i] = v }
         paramMode = s.getBoolean("pmode", false)
@@ -259,7 +264,7 @@ object Dsp {
     fun persist() {
         sp?.edit()?.putBoolean("on", enabled)?.putFloat("pre", preamp)?.putBoolean("tone", toneOn)
             ?.putFloat("bass", bass)?.putFloat("treb", treble)?.putBoolean("lim", limiter)
-            ?.putBoolean("auto", autoPre)?.putFloat("out", outGain)?.putInt("rgm", rgMode)?.putInt("fade", fadeMs)?.putBoolean("pmode", paramMode)?.putString("pb", bandsToJson(pbands.toList()).toString())?.putString("preset", preset)?.putString("g", gains.joinToString(","))?.apply()
+            ?.putBoolean("auto", autoPre)?.putFloat("out", outGain)?.putInt("rgm", rgMode)?.putInt("fade", fadeMs)?.putFloat("bf", bassFreq)?.putFloat("tf", trebleFreq)?.putFloat("tq", toneQ)?.putBoolean("pmode", paramMode)?.putString("pb", bandsToJson(pbands.toList()).toString())?.putString("preset", preset)?.putString("g", gains.joinToString(","))?.apply()
     }
 
     fun commit() { version++; persist() }
@@ -318,8 +323,8 @@ object Dsp {
         } else {
             for (b in pbands) list += if (b.on && b.freq < fs * 0.49) design(b, fs) else identity
         }
-        list += if (toneOn && bass > 0.5f) lowShelf(120.0, bass / 10.0, fs) else identity
-        list += if (toneOn && treble > 0.5f) highShelf(8000.0, treble / 10.0, fs) else identity
+        list += if (toneOn && bass > 0.5f) shelfQ(bassFreq.toDouble(), bass / 10.0, toneQ.toDouble(), fs, true) else identity
+        list += if (toneOn && treble > 0.5f) shelfQ(trebleFreq.toDouble(), treble / 10.0, toneQ.toDouble(), fs, false) else identity
         return list
     }
 

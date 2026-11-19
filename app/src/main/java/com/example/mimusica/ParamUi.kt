@@ -7,7 +7,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +26,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.pow
@@ -55,6 +58,7 @@ fun ParamEditor(modifier: Modifier) {
     var importText by remember { mutableStateOf("") }
     var importMsg by remember { mutableStateOf("") }
     var copied by remember { mutableStateOf(false) }
+    var autoEqDialog by remember { mutableStateOf(false) }
     val clip = LocalClipboardManager.current
     val bands = Dsp.pbands
     if (bands.isNotEmpty() && sel > bands.lastIndex) sel = bands.lastIndex
@@ -121,12 +125,15 @@ fun ParamEditor(modifier: Modifier) {
                 TextButton(onClick = { Dsp.removeBand(sel) }) { Text("Eliminar") }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp)) {
+            OutlinedButton(onClick = { autoEqDialog = true }) { Text("Buscar AutoEq") }
             OutlinedButton(onClick = { importMsg = ""; importDialog = true }) { Text("Importar") }
             OutlinedButton(onClick = { clip.setText(AnnotatedString(Dsp.exportApo())); copied = true }) { Text("Exportar") }
         }
         if (copied) Text("Copiado al portapapeles (formato EqualizerAPO / AutoEq).", fontSize = 11.sp, color = Color(0xFFB0B0B0))
     }
+
+    if (autoEqDialog) AutoEqDialog({ autoEqDialog = false }, { sel = 0; copied = false })
 
     if (importDialog) {
         AlertDialog(
@@ -156,4 +163,59 @@ fun ParamEditor(modifier: Modifier) {
             dismissButton = { TextButton(onClick = { importDialog = false }) { Text("Cancelar") } }
         )
     }
+}
+
+
+/** Busca un audífono en el índice público de AutoEq y aplica su ajuste paramétrico. */
+@Composable
+fun AutoEqDialog(onClose: () -> Unit, onImported: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var index by remember { mutableStateOf<List<AutoEq.Entry>?>(null) }
+    var err by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val l = AutoEq.loadIndex(ctx)
+        if (l.isEmpty()) err = "No pude descargar el índice de AutoEq. ¿Hay conexión?" else index = l
+    }
+    val results = remember(query, index) { index?.let { AutoEq.search(it, query) } ?: emptyList() }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Buscar en AutoEq") },
+        text = {
+            Column {
+                OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true, placeholder = { Text("Ej.: Moondrop Aria") })
+                if (index == null && err.isEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text("  Descargando índice…", fontSize = 12.sp)
+                    }
+                }
+                if (err.isNotEmpty()) Text(err, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+                LazyColumn(Modifier.heightIn(max = 280.dp)) {
+                    items(results) { e ->
+                        ListItem(
+                            headlineContent = { Text(e.name, maxLines = 2) },
+                            supportingContent = { Text(e.source + if (e.rig.isNotEmpty()) " · " + e.rig else "") },
+                            modifier = Modifier.clickable(enabled = !busy) {
+                                scope.launch {
+                                    busy = true
+                                    err = ""
+                                    val t = AutoEq.fetchParametric(e)
+                                    busy = false
+                                    if (t == null) err = "No pude descargar ese ajuste."
+                                    else if (Dsp.importApo(t) > 0) { onImported(); onClose() }
+                                    else err = "El archivo no tenía filtros válidos."
+                                }
+                            }
+                        )
+                    }
+                }
+                if (busy) Text("Descargando ajuste…", fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onClose) { Text("Cerrar") } }
+    )
 }

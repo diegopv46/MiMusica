@@ -97,6 +97,13 @@ object UsbAudio {
         }.getOrDefault(false)
     }
 
+    fun sampleRates(ctx: Context): IntArray {
+        val am = ctx.getSystemService(AudioManager::class.java)
+        return device(am)?.sampleRates ?: IntArray(0)
+    }
+
+    fun directActive(): Boolean = status.startsWith("Modo USB directo activo")
+
     fun summary(ctx: Context): String {
         val am = ctx.getSystemService(AudioManager::class.java)
         val dev = device(am) ?: return "No hay DAC USB conectado."

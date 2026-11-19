@@ -247,6 +247,7 @@ class MainActivity : ComponentActivity() {
         AppPrefs.init(this)
         DeviceProfiles.start(this)
         Stats.init(this)
+        Tags.init(this)
         setContent {
             val sysDark = isSystemInDarkTheme()
             val dark = when (AppPrefs.theme) { 1 -> false; 2 -> true; else -> sysDark }

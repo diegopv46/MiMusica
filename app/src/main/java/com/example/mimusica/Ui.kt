@@ -49,14 +49,18 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.graphics.BitmapFactory
 
 object ArtCache { val cache = LruCache<Uri, Bitmap>(150) }
 
 suspend fun loadArt(ctx: Context, uri: Uri): Bitmap? {
     ArtCache.cache.get(uri)?.let { return it }
+    val custom = uri.lastPathSegment?.toLongOrNull()?.let { Covers.fileFor(ctx, it) }
     val b = withContext(Dispatchers.IO) {
-        runCatching { ctx.contentResolver.loadThumbnail(uri, Size(512, 512), null) }.getOrNull()
+        custom?.let { runCatching { BitmapFactory.decodeFile(it.path) }.getOrNull() }
+            ?: runCatching { ctx.contentResolver.loadThumbnail(uri, Size(512, 512), null) }.getOrNull()
     }
     if (b != null) ArtCache.cache.put(uri, b)
     return b
@@ -65,8 +69,8 @@ suspend fun loadArt(ctx: Context, uri: Uri): Bitmap? {
 @Composable
 fun Art(uri: Uri?, modifier: Modifier) {
     val ctx = LocalContext.current
-    var bmp by remember(uri) { mutableStateOf<Bitmap?>(uri?.let { ArtCache.cache.get(it) }) }
-    LaunchedEffect(uri) { if (uri != null && bmp == null) bmp = loadArt(ctx, uri) }
+    var bmp by remember(uri, Covers.version) { mutableStateOf<Bitmap?>(uri?.let { ArtCache.cache.get(it) }) }
+    LaunchedEffect(uri, Covers.version) { if (uri != null && bmp == null) bmp = loadArt(ctx, uri) }
     Box(
         modifier.clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.secondaryContainer),
         contentAlignment = Alignment.Center
@@ -189,9 +193,10 @@ fun SelectionBar(count: Int, onClose: () -> Unit, onAll: () -> Unit, onPlay: () 
 
 @Composable
 fun MusicApp(
-    songs: List<Song>, folders: Set<String>, controller: MediaController?, granted: Boolean,
+    songsIn: List<Song>, folders: Set<String>, controller: MediaController?, granted: Boolean,
     onPermission: () -> Unit, onAddFolder: () -> Unit, onRemoveFolder: (String) -> Unit
 ) {
+    val songs = remember(songsIn, Tags.edits) { songsIn.map { Tags.apply(it) } }
     var nav by remember { mutableIntStateOf(0) }
     var overlay by remember { mutableStateOf<String?>(null) }
     var tab by remember { mutableIntStateOf(0) }
@@ -246,6 +251,9 @@ fun MusicApp(
 
     val ctx = LocalContext.current
     var restored by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var editTags by remember { mutableStateOf<Song?>(null) }
+    remember(songs) { Covers.setIndex(songs); 0 }
     var pendingExport by remember { mutableStateOf<List<Song>>(emptyList()) }
     val m3uExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/x-mpegurl")) { uri ->
         if (uri != null) {
@@ -574,6 +582,8 @@ fun MusicApp(
         }
     }
 
+    editTags?.let { s -> EditTagsDialog(s) { editTags = null } }
+
     menuSong?.let { s ->
         AlertDialog(
             onDismissRequest = { menuSong = null },
@@ -584,6 +594,15 @@ fun MusicApp(
                     MenuItem("Reproducir a continuación") { addToQueue(s, true); menuSong = null }
                     MenuItem("Añadir a la cola") { addToQueue(s, false); menuSong = null }
                     MenuItem(if (s.id in Store.favorites) "Quitar de favoritas" else "Añadir a favoritas") { Store.toggleFav(s.id); menuSong = null }
+                    MenuItem("Buscar carátula en internet") {
+                        menuSong = null
+                        Toast.makeText(ctx, "Buscando carátula…", Toast.LENGTH_SHORT).show()
+                        scope.launch {
+                            val ok = Covers.download(ctx, s.artist, s.album)
+                            Toast.makeText(ctx, if (ok) "Carátula guardada" else "No encontré una carátula", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    MenuItem("Editar etiquetas") { editTags = s; menuSong = null }
                     Store.playlists.keys.forEach { n -> MenuItem("Agregar a: $n") { Store.addTo(n, s.id); menuSong = null } }
                     val po = plOpen
                     if (nav == 0 && po != null && po != FAV && !po.startsWith("__auto")) MenuItem("Quitar de esta lista") { Store.removeFrom(po, s.id); menuSong = null }
