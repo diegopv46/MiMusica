@@ -18,6 +18,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -198,6 +200,13 @@ fun MusicApp(
 ) {
     val songs = remember(songsIn, Tags.edits) { songsIn.map { Tags.apply(it) } }
     var nav by remember { mutableIntStateOf(0) }
+    val pager = rememberPagerState(initialPage = nav) { 4 }
+    LaunchedEffect(pager) {
+        snapshotFlow { pager.currentPage to pager.isScrollInProgress }.collect { (p, scrolling) ->
+            if (!scrolling && p != nav) nav = p
+        }
+    }
+    LaunchedEffect(nav) { if (pager.currentPage != nav) pager.animateScrollToPage(nav) }
     var overlay by remember { mutableStateOf<String?>(null) }
     var tab by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
@@ -253,7 +262,7 @@ fun MusicApp(
     var restored by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var editTags by remember { mutableStateOf<Song?>(null) }
-    remember(songs) { Covers.setIndex(songs); 0 }
+    remember(songs) { Covers.indexSongs(songs); 0 }
     var pendingExport by remember { mutableStateOf<List<Song>>(emptyList()) }
     val m3uExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/x-mpegurl")) { uri ->
         if (uri != null) {
@@ -398,7 +407,8 @@ fun MusicApp(
     } else {
         Column(Modifier.fillMaxSize().background(if (nav == 3) Color.Black else Color.Transparent)) {
             Box(Modifier.weight(1f).fillMaxWidth().statusBarsPadding()) {
-                when (nav) {
+                HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+                when (page) {
                     0 -> Column(Modifier.fillMaxSize()) {
                         if (selected.isNotEmpty()) selBar() else Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Mi Música", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -406,6 +416,17 @@ fun MusicApp(
                         }
                         val d = detail
                         val po = plOpen
+                        val order = listOf(0 to "Canciones", 1 to "Álbumes", 2 to "Artistas", 6 to "Géneros", 7 to "Años", 3 to "Carpetas", 4 to "Recientes", 5 to "Listas")
+                        val tabPager = rememberPagerState(initialPage = order.indexOfFirst { it.first == tab }.coerceAtLeast(0)) { order.size }
+                        LaunchedEffect(tabPager) {
+                            snapshotFlow { tabPager.currentPage to tabPager.isScrollInProgress }.collect { (p, scrolling) ->
+                                if (!scrolling && order[p].first != tab) tab = order[p].first
+                            }
+                        }
+                        LaunchedEffect(tab) {
+                            val t = order.indexOfFirst { it.first == tab }.coerceAtLeast(0)
+                            if (tabPager.currentPage != t) tabPager.animateScrollToPage(t)
+                        }
                         if (!granted) {
                             Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text("Necesito permiso para leer tu música.")
@@ -420,7 +441,6 @@ fun MusicApp(
                             }
                         } else {
                             if (d == null && po == null) {
-                                val order = listOf(0 to "Canciones", 1 to "Álbumes", 2 to "Artistas", 6 to "Géneros", 7 to "Años", 3 to "Carpetas", 4 to "Recientes", 5 to "Listas")
                                 ScrollableTabRow(selectedTabIndex = order.indexOfFirst { it.first == tab }.coerceAtLeast(0), edgePadding = 8.dp) {
                                     order.forEach { (id, t) ->
                                         Tab(selected = tab == id, onClick = { tab = id; detail = null; plOpen = null }, text = { Text(t) })
@@ -441,7 +461,8 @@ fun MusicApp(
                                         if (plList.isEmpty()) Text("Aún no hay canciones aquí. Selecciónalas con una pulsación larga en la biblioteca y usa “Agregar a lista”.", Modifier.padding(16.dp))
                                         else Box(Modifier.weight(1f)) { SongList(plList, curId, selected, { play(plList, it) }, toggle, { menuSong = it }) }
                                     }
-                                } else when (tab) {
+                                } else HorizontalPager(state = tabPager, modifier = Modifier.fillMaxSize()) { page ->
+                                  when (order[page].first) {
                                     0 -> Column(Modifier.fillMaxSize()) {
                                         SortBar()
                                         PlayRow(sortedSongs, play, playShuffle)
@@ -552,6 +573,7 @@ fun MusicApp(
                                         }
                                     }
                                 }
+                                }
                             }
                         }
                     }
@@ -576,6 +598,7 @@ fun MusicApp(
                         else QueueList(queue, curIndex, controller)
                     }
                     else -> EqScreen()
+                }
                 }
             }
             BottomDock(current, isPlaying, position, duration, nav, { nav = it }, controller) { overlay = "now" }

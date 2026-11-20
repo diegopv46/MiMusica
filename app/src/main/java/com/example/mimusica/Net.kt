@@ -100,7 +100,7 @@ object Covers {
 
     fun key(artist: String, album: String): String = (artist + "|" + album).lowercase().hashCode().toString()
 
-    fun setIndex(songs: List<Song>) {
+    fun indexSongs(songs: List<Song>) {
         index = songs.associate { it.id to key(it.artist, it.album) }
     }
 
