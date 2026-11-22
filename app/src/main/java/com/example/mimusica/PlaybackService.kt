@@ -144,6 +144,7 @@ class PlaybackService : MediaSessionService() {
             .setSessionActivity(openApp)
             .setCallback(sessionCallback)
             .setCustomLayout(cardLayout(false))
+            .setBitmapLoader(ArtBitmapLoader(this))
             .build()
         player.addListener(object : Player.Listener {
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {

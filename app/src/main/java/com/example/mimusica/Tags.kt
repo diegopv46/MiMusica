@@ -45,7 +45,8 @@ object Tags {
 
     fun apply(s: Song): Song {
         val e = edits[s.id] ?: return s
-        val md = s.item.mediaMetadata.buildUpon().setTitle(e.title).setArtist(e.artist).setAlbumTitle(e.album).build()
+        val md = s.item.mediaMetadata.buildUpon().setTitle(e.title).setArtist(e.artist).setAlbumTitle(e.album)
+            .setArtworkUri(Covers.artUri(s.id, e.artist, e.album)).build()
         return s.copy(
             title = e.title, artist = e.artist, album = e.album, genre = e.genre, year = e.year,
             item = s.item.buildUpon().setMediaMetadata(md).build()

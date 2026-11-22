@@ -73,6 +73,12 @@ fun AudioInfoDialog(info: String, title: String, onClose: () -> Unit) {
                 Text("Dispositivo: ${DeviceProfiles.name.ifEmpty { "sin datos" }}")
                 if (rates.isNotEmpty()) Text("Frecuencias del DAC: ${rates.joinToString(", ")} Hz")
                 if (UsbAudio.status.isNotEmpty()) Text(UsbAudio.status)
+                if (UsbAudio.directActive() && active > 0) {
+                    Text(
+                        "Nota: con el procesamiento activo la señal ya no es idéntica al archivo, aunque sigue evitando el remuestreo del sistema.",
+                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
                 Head("Fidelidad (estimación): $score / 100")
                 notes.forEach { Text("• $it") }
                 Text("Es una estimación orientativa, no una medición.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))

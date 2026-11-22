@@ -1,6 +1,13 @@
 package com.example.mimusica
 
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.content.SharedPreferences
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
@@ -97,6 +104,124 @@ object UsbAudio {
         }.getOrDefault(false)
     }
 
+    private class UnitInfo(val subtype: Int, val id: Int, val source: Int, val termType: Int)
+
+    private fun u8(b: ByteArray, i: Int) = b[i].toInt() and 0xFF
+
+    private fun dbText(b: ByteArray): String {
+        val raw = ((b[1].toInt() shl 8) or (b[0].toInt() and 0xFF)).toShort().toInt()
+        return if (raw == -32768) "−∞" else "%.1f dB".format(raw / 256.0)
+    }
+
+    /** Lee, sin cambiar nada, los controles de volumen del DAC por USB y dice si Android lo permite. */
+    fun probeHwVolume(ctx: Context): String {
+        val usbMgr = ctx.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return "Este teléfono no ofrece USB host."
+        val dev = usbMgr.deviceList.values.firstOrNull { d ->
+            (0 until d.interfaceCount).any { d.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_AUDIO }
+        } ?: return "No hay ningún dispositivo USB de audio conectado."
+        val sb = StringBuilder()
+        sb.appendLine("Dispositivo: ${dev.productName ?: "sin nombre"} (${"%04x".format(dev.vendorId)}:${"%04x".format(dev.productId)})")
+        if (!usbMgr.hasPermission(dev)) {
+            val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
+            usbMgr.requestPermission(
+                dev, PendingIntent.getBroadcast(ctx, 0, Intent("com.example.mimusica.USB_PERMISSION").setPackage(ctx.packageName), flags)
+            )
+            sb.appendLine("Falta el permiso USB. Acepta el aviso de Android y vuelve a tocar el botón.")
+            return sb.toString()
+        }
+        val conn = usbMgr.openDevice(dev) ?: return sb.append("No pude abrir el dispositivo.").toString()
+        try {
+            val raw = conn.rawDescriptors ?: return sb.append("No pude leer los descriptores del dispositivo.").toString()
+            var acIface = -1
+            var uac = 0
+            var inAc = false
+            val units = HashMap<Int, UnitInfo>()
+            val outputs = ArrayList<UnitInfo>()
+            var i = 0
+            while (i + 2 < raw.size) {
+                val len = u8(raw, i)
+                if (len < 2 || i + len > raw.size) break
+                val type = u8(raw, i + 1)
+                if (type == 0x04 && len >= 9) {
+                    inAc = u8(raw, i + 5) == 1 && u8(raw, i + 6) == 1
+                    if (inAc && acIface < 0) acIface = u8(raw, i + 2)
+                } else if (type == 0x24 && inAc && len >= 4) {
+                    val st = u8(raw, i + 2)
+                    val id = u8(raw, i + 3)
+                    val term = if (len > 5) u8(raw, i + 4) or (u8(raw, i + 5) shl 8) else 0
+                    when (st) {
+                        0x01 -> if (len >= 5) uac = u8(raw, i + 3) or (u8(raw, i + 4) shl 8)
+                        0x02 -> units[id] = UnitInfo(st, id, -1, term)
+                        0x03 -> { val u = UnitInfo(st, id, if (len > 7) u8(raw, i + 7) else -1, term); units[id] = u; outputs += u }
+                        0x06 -> units[id] = UnitInfo(st, id, if (len > 4) u8(raw, i + 4) else -1, 0)
+                        else -> units[id] = UnitInfo(st, id, -1, 0)
+                    }
+                }
+                i += len
+            }
+            val uac2 = uac >= 0x0200
+            sb.appendLine("Clase de audio: ${if (uac == 0) "no detectada" else if (uac2) "UAC2" else "UAC1"} (bcdADC 0x${"%04x".format(uac)})")
+            sb.appendLine("Interfaz de control de audio: ${if (acIface >= 0) acIface else "no encontrada"}")
+            val playback = ArrayList<Int>()
+            for (o in outputs) {
+                sb.appendLine("Terminal de salida ${o.id}: tipo 0x${"%04x".format(o.termType)}, fuente ${o.source}")
+                if ((o.termType shr 8) == 0x01) continue
+                var src = o.source
+                var hops = 0
+                while (src > 0 && hops < 6) {
+                    val u = units[src] ?: break
+                    if (u.subtype == 0x06) { playback += u.id; break }
+                    src = u.source; hops++
+                }
+            }
+            val targets = playback.ifEmpty { units.values.filter { it.subtype == 0x06 }.map { it.id } }
+            if (targets.isEmpty()) {
+                sb.appendLine("\nNo encontré ninguna unidad de control de volumen en este dispositivo.")
+                return sb.toString()
+            }
+            sb.appendLine("Unidades de volumen a probar: ${targets.joinToString()}" + if (playback.isEmpty()) " (no pude saber cuál es la del reproductor)" else "")
+            val iface = if (acIface >= 0) acIface else 0
+            var answered = false
+            for (fu in targets) {
+                sb.appendLine("\nUnidad $fu:")
+                for (ch in 0..2) {
+                    val name = if (ch == 0) "maestro" else "canal $ch"
+                    val wValue = (0x02 shl 8) or ch
+                    val wIndex = (fu shl 8) or iface
+                    if (!uac2) {
+                        val parts = listOf("actual" to 0x81, "mínimo" to 0x82, "máximo" to 0x83).map { (label, req) ->
+                            val b = ByteArray(2)
+                            val n = conn.controlTransfer(0xA1, req, wValue, wIndex, b, 2, 500)
+                            if (n == 2) { answered = true; "$label ${dbText(b)}" } else "$label falló($n)"
+                        }
+                        sb.appendLine("  $name: ${parts.joinToString(" · ")}")
+                    } else {
+                        val cur = ByteArray(2)
+                        val nc = conn.controlTransfer(0xA1, 0x01, wValue, wIndex, cur, 2, 500)
+                        val rng = ByteArray(8)
+                        val nr = conn.controlTransfer(0xA1, 0x02, wValue, wIndex, rng, 8, 500)
+                        if (nc == 2) answered = true
+                        val curTxt = if (nc == 2) "actual ${dbText(cur)}" else "actual falló($nc)"
+                        val rngTxt = if (nr >= 8) {
+                            answered = true
+                            "mínimo ${dbText(byteArrayOf(rng[2], rng[3]))} · máximo ${dbText(byteArrayOf(rng[4], rng[5]))}"
+                        } else "rango falló($nr)"
+                        sb.appendLine("  $name: $curTxt · $rngTxt")
+                    }
+                }
+            }
+            sb.appendLine()
+            sb.appendLine(
+                if (answered) "RESULTADO: el DAC respondió. Controlar su volumen por USB parece posible sin reclamar la interfaz."
+                else "RESULTADO: ninguna lectura respondió. Es lo esperable si el sistema ya usa la interfaz de audio; el control directo exigiría un controlador USB propio."
+            )
+        } finally {
+            conn.close()
+        }
+        return sb.toString()
+    }
+
     fun sampleRates(ctx: Context): IntArray {
         val am = ctx.getSystemService(AudioManager::class.java)
         return device(am)?.sampleRates ?: IntArray(0)
@@ -158,6 +283,8 @@ fun AudioInfoScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val clip = LocalClipboardManager.current
     var key by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    var hwText by remember { mutableStateOf("") }
     val canBP = remember(key) { runCatching { UsbAudio.offersBitPerfect(ctx) }.getOrNull() }
     val summary = remember(key) { runCatching { UsbAudio.summary(ctx) }.getOrDefault("") }
     val system = remember(key) { runCatching { SessionLog.systemSnapshot(ctx) }.getOrElse { "error: ${it.message}" } }
@@ -180,17 +307,24 @@ fun AudioInfoScreen(onBack: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { key++ }) { Text("Actualizar") }
             OutlinedButton(onClick = {
-                clip.setText(AnnotatedString("COMPILACION " + SessionLog.BUILD + "\n\nSISTEMA\n" + system + "\nREGISTRO\n" + SessionLog.lines.joinToString("\n") + "\n\nUSB\n" + report))
+                clip.setText(AnnotatedString("COMPILACION " + SessionLog.BUILD + "\n\nSISTEMA\n" + system + "\nREGISTRO\n" + SessionLog.lines.joinToString("\n") + "\n\nUSB\n" + report + "\n\nVOLUMEN DEL DAC\n" + hwText))
             }) { Text("Copiar") }
             OutlinedButton(onClick = { SessionLog.clear() }) { Text("Borrar") }
         }
         OutlinedButton(onClick = { SessionLog.testSeek(10_000); key++ }) { Text("Probar salto +10 s como el sistema") }
+        OutlinedButton(onClick = {
+            scope.launch {
+                hwText = "Leyendo el DAC…"
+                hwText = withContext(Dispatchers.IO) { runCatching { UsbAudio.probeHwVolume(ctx) }.getOrElse { "Error: ${it.message}" } }
+            }
+        }) { Text("Probar lectura de volumen del DAC") }
         Spacer(Modifier.height(8.dp))
         Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
             Text(
                 "COMPILACIÓN: " + SessionLog.BUILD + "\n\nLO QUE VE EL SISTEMA AHORA\n" + system +
                     "\nREGISTRO DE LA SESIÓN\n" + SessionLog.lines.joinToString("\n").ifEmpty { "(vacío)" } +
-                    "\n\nDIAGNÓSTICO USB\n" + report,
+                    "\n\nDIAGNÓSTICO USB\n" + report +
+                    (if (hwText.isNotEmpty()) "\n\nVOLUMEN DEL DAC (PRUEBA)\n" + hwText else ""),
                 fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall
             )
         }

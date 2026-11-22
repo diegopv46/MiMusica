@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -44,21 +45,27 @@ object WidgetUi {
         val item = p?.currentMediaItem
         val title = item?.mediaMetadata?.title?.toString() ?: sp.getString("title", "") ?: ""
         val artist = item?.mediaMetadata?.artist?.toString() ?: sp.getString("artist", "") ?: ""
+        val album = item?.mediaMetadata?.albumTitle?.toString() ?: sp.getString("album", "") ?: ""
         val id = item?.mediaId?.toLongOrNull() ?: sp.getLong("id", 0L)
         val playing = p?.isPlaying ?: false
-        sp.edit().putString("title", title).putString("artist", artist).putLong("id", id).apply()
+        sp.edit().putString("title", title).putString("artist", artist).putString("album", album).putLong("id", id).apply()
         io.execute {
-            val art = runCatching { art(app, id) }.getOrNull()
+            val art = runCatching { art(app, id, artist, album) }.getOrNull()
             runCatching { mgr.updateAppWidget(ids, build(app, title, artist, playing, art)) }
         }
     }
 
-    private fun art(app: Context, id: Long): Bitmap? {
+    private fun art(app: Context, id: Long, artist: String, album: String): Bitmap? {
         if (id == 0L) return null
-        if (id == artId && artBmp != null) return artBmp
-        val raw = runCatching { app.contentResolver.loadThumbnail(uriOf(id), Size(220, 220), null) }.getOrNull()
-        val out = raw?.let { rounded(it, 28f) }
-        artId = id
+        val custom = if (album.isNotEmpty()) Covers.fileForMeta(app, artist, album) else null
+        val cacheKey = if (custom != null) -id else id
+        if (cacheKey == artId && artBmp != null) return artBmp
+        val raw = custom?.let { runCatching { BitmapFactory.decodeFile(it.path) }.getOrNull() }
+            ?: runCatching { app.contentResolver.loadThumbnail(uriOf(id), Size(220, 220), null) }.getOrNull()
+        // El widget viaja por binder: hay que mantener la imagen pequeña
+        val small = raw?.let { if (it.width > 220) Bitmap.createScaledBitmap(it, 220, 220, true) else it }
+        val out = small?.let { rounded(it, 28f) }
+        artId = cacheKey
         artBmp = out
         return out
     }

@@ -37,35 +37,46 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
     private var lastFade = 1f
 
     // Limitador de picos: anticipación de ~2 ms, enlazado entre canales, liberación de ~80 ms.
+    // El mínimo de la ventana se obtiene con una cola monótona: coste constante por muestra.
     private val limThr = 0.989f
     private var limCh = 0
     private var limL = 0
     private var dl = FloatArray(0)
-    private var gh = FloatArray(0)
     private var bh = FloatArray(0)
     private var bSum = 0.0
-    private var gIdx = 0
     private var bIdx = 0
     private var dlIdx = 0
     private var gCur = 1f
     private var relCoef = 0.001f
     private var minGainBuf = 1f
+    private var dqIdx = IntArray(0)
+    private var dqVal = FloatArray(0)
+    private var dqHead = 0
+    private var dqTail = 0
+    private var sampleClock = 0
 
     private fun ensureLimiter() {
         val l = max(16, (0.002 * rate).roundToInt())
         if (limCh == channels && limL == l && dl.isNotEmpty()) return
         limCh = channels; limL = l
         dl = FloatArray(l * channels)
-        gh = FloatArray(l) { 1f }
         bh = FloatArray(l) { 1f }
-        bSum = l.toDouble(); gIdx = 0; bIdx = 0; dlIdx = 0; gCur = 1f
+        dqIdx = IntArray(l + 2)
+        dqVal = FloatArray(l + 2)
+        resetLimiterState()
         relCoef = (1.0 - exp(-1.0 / (0.08 * rate))).toFloat()
     }
 
     private fun resetLimiter() {
         if (dl.isEmpty()) return
-        dl.fill(0f); gh.fill(1f); bh.fill(1f)
-        bSum = limL.toDouble(); gIdx = 0; bIdx = 0; dlIdx = 0; gCur = 1f
+        dl.fill(0f); bh.fill(1f)
+        resetLimiterState()
+    }
+
+    private fun resetLimiterState() {
+        bSum = limL.toDouble()
+        bIdx = 0; dlIdx = 0; gCur = 1f
+        dqHead = 0; dqTail = 0; sampleClock = 0
     }
 
     /** Pasa un cuadro por el limitador y lo escribe con un retardo de (L-1) cuadros. */
@@ -74,13 +85,28 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
         var pk = 0f
         for (c in 0 until ch) { val a = abs(fr[off + c]); if (a > pk) pk = a }
         val req = if (limOn && pk > limThr) limThr / pk else 1f
-        gh[gIdx] = req
-        gIdx = (gIdx + 1) % limL
-        var mn = 1f
-        for (i in 0 until limL) if (gh[i] < mn) mn = gh[i]
+        val cap = dqIdx.size
+        // 1. Sacar de la cola lo que ya salió de la ventana (la resta es segura aunque el contador se desborde)
+        while (dqHead != dqTail && sampleClock - dqIdx[dqHead] >= limL) dqHead = (dqHead + 1) % cap
+        // 2. Mantener la cola en orden creciente
+        while (dqHead != dqTail) {
+            val prev = (dqTail - 1 + cap) % cap
+            if (dqVal[prev] >= req) dqTail = prev else break
+        }
+        dqIdx[dqTail] = sampleClock
+        dqVal[dqTail] = req
+        dqTail = (dqTail + 1) % cap
+        sampleClock++
+        val mn = dqVal[dqHead]
+        // 3. Promedio móvil; se recalcula exacto cada vuelta para que no se acumule error
         bSum += (mn - bh[bIdx]).toDouble()
         bh[bIdx] = mn
         bIdx = (bIdx + 1) % limL
+        if (bIdx == 0) {
+            var exact = 0.0
+            for (i in 0 until limL) exact += bh[i]
+            bSum = exact
+        }
         val gs = (bSum / limL).toFloat()
         gCur = if (gs < gCur) gs else gCur + (gs - gCur) * relCoef
         val p = dlIdx
@@ -162,18 +188,20 @@ class DspAudioSink(private val ctx: Context, inner: AudioSink) : ForwardingAudio
     }
 
     private fun refresh() {
-        ver = Dsp.version
-        on = Dsp.enabled
-        lim = Dsp.limiter
-        val eqPart = if (on) Dsp.preamp - (if (Dsp.autoPre) Dsp.peakDb() else 0f) else 0f
-        val useAlbum = Dsp.rgMode == 2 && !Dsp.rgAlbum.isNaN()
-        var rg = if (Dsp.rgMode == 0) 0f else (if (useAlbum) Dsp.rgAlbum else Dsp.rgTrack)
-        val pk = if (useAlbum) Dsp.peakAlbum else Dsp.peakTrack
+        val v = Dsp.version   // primero la versión, luego la copia: así nunca nos perdemos una actualización
+        val c = Dsp.cfg
+        ver = v
+        on = c.enabled
+        lim = c.limiter
+        val eqPart = if (on) c.preamp - (if (c.autoPre) Dsp.peakDbFor(c) else 0f) else 0f
+        val useAlbum = c.rgMode == 2 && !c.rgAlbum.isNaN()
+        var rg = if (c.rgMode == 0) 0f else (if (useAlbum) c.rgAlbum else c.rgTrack)
+        val pk = if (useAlbum) c.peakAlbum else c.peakTrack
         if (rg.isNaN()) rg = 0f
         else if (rg > 0f && !pk.isNaN() && pk > 0f) rg = min(rg, -20f * log10(pk))
         rg = rg.coerceIn(-24f, 12f)
-        gain = 10.0.pow((eqPart + Dsp.outGain + rg) / 20.0)
-        coefs = Dsp.chain(rate)
+        gain = 10.0.pow((eqPart + c.outGain + rg) / 20.0)
+        coefs = Dsp.chainFor(c, rate)
     }
 
     private fun process(inp: ByteBuffer): ByteBuffer {

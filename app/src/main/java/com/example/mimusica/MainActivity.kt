@@ -187,7 +187,7 @@ class MainActivity : ComponentActivity() {
 
     private fun build(r: RawSong): Song {
         val uri = uriOf(r.id)
-        val art = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), r.albumId)
+        val art = Covers.artUri(r.id, r.artist, r.album)
         val item = MediaItem.Builder()
             .setMediaId(r.id.toString())
             .setUri(uri)

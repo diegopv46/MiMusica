@@ -2,6 +2,7 @@ package com.example.mimusica
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -103,6 +104,14 @@ object Covers {
     fun indexSongs(songs: List<Song>) {
         index = songs.associate { it.id to key(it.artist, it.album) }
     }
+
+    fun fileForMeta(ctx: Context, artist: String, album: String): File? {
+        val f = File(File(ctx.filesDir, "covers"), key(artist, album) + ".jpg")
+        return if (f.exists()) f else null
+    }
+
+    fun artUri(id: Long, artist: String, album: String): Uri =
+        Uri.parse("mimusica-art://art/$id?artist=${URLEncoder.encode(artist, "UTF-8")}&album=${URLEncoder.encode(album, "UTF-8")}")
 
     fun fileFor(ctx: Context, id: Long): File? {
         val k = index[id] ?: return null

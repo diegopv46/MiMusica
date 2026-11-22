@@ -73,7 +73,17 @@ object Dsp {
         val fout = if (hasNext) ((durMs - posMs).toFloat() / f).coerceIn(0f, 1f) else 1f
         return min(fin, fout)
     }
-    @Volatile var version = 0
+    @Volatile private var ver = 0
+
+    /** Contador de cambios. Al subirlo se publica una copia inmutable de la configuración para el hilo de audio. */
+    var version: Int
+        get() = ver
+        set(v) { ver = v; cfg = buildCfg() }
+
+    @Volatile var cfg: Cfg = Cfg(
+        false, true, true, 0f, 0f, 1, Float.NaN, Float.NaN, Float.NaN, Float.NaN,
+        false, FloatArray(10), emptyList(), false, 0f, 0f, 120f, 8000f, 0.71f
+    )
     @Volatile var level = 0f
     @Volatile var srcDesc = ""
     @Volatile var srcRate = 0
@@ -313,19 +323,51 @@ object Dsp {
     }
 
     /** Siempre 12 filtros (10 bandas + graves + agudos) para que el estado no se desordene al cambiar valores. */
-    fun chain(fs: Double): List<Coef> {
+    /** Todo lo que necesita el motor de audio, copiado de una vez para que nunca vea un estado a medias. */
+    class Cfg(
+        val enabled: Boolean, val limiter: Boolean, val autoPre: Boolean,
+        val preamp: Float, val outGain: Float,
+        val rgMode: Int, val rgTrack: Float, val rgAlbum: Float, val peakTrack: Float, val peakAlbum: Float,
+        val paramMode: Boolean, val gains: FloatArray, val bands: List<PBand>,
+        val toneOn: Boolean, val bass: Float, val treble: Float,
+        val bassFreq: Float, val trebleFreq: Float, val toneQ: Float
+    )
+
+    /** Se llama desde el hilo de la interfaz: lee los estados de Compose y los copia. */
+    fun buildCfg(): Cfg = Cfg(
+        enabled, limiter, autoPre, preamp, outGain,
+        rgMode, rgTrack, rgAlbum, peakTrack, peakAlbum,
+        paramMode, FloatArray(10) { gains[it] }, pbands.toList(),
+        toneOn, bass, treble, bassFreq, trebleFreq, toneQ
+    )
+
+    fun chainFor(c: Cfg, fs: Double): List<Coef> {
         val list = ArrayList<Coef>(MAX_FILTERS)
-        if (!paramMode) {
+        if (!c.paramMode) {
             for (i in 0 until 10) {
-                val f = freqs[i].toDouble(); val g = gains[i].toDouble()
+                val f = freqs[i].toDouble(); val g = c.gains[i].toDouble()
                 list += if (f < fs * 0.45 && abs(g) > 0.01) peaking(f, g, 1.4, fs) else identity
             }
         } else {
-            for (b in pbands) list += if (b.on && b.freq < fs * 0.49) design(b, fs) else identity
+            for (b in c.bands) list += if (b.on && b.freq < fs * 0.49) design(b, fs) else identity
         }
-        list += if (toneOn && bass > 0.5f) shelfQ(bassFreq.toDouble(), bass / 10.0, toneQ.toDouble(), fs, true) else identity
-        list += if (toneOn && treble > 0.5f) shelfQ(trebleFreq.toDouble(), treble / 10.0, toneQ.toDouble(), fs, false) else identity
+        list += if (c.toneOn && c.bass > 0.5f) shelfQ(c.bassFreq.toDouble(), c.bass / 10.0, c.toneQ.toDouble(), fs, true) else identity
+        list += if (c.toneOn && c.treble > 0.5f) shelfQ(c.trebleFreq.toDouble(), c.treble / 10.0, c.toneQ.toDouble(), fs, false) else identity
         return list
+    }
+
+    /** Versión para la interfaz: lee los estados de Compose, así la curva se redibuja al cambiarlos. */
+    fun chain(fs: Double): List<Coef> = chainFor(buildCfg(), fs)
+
+    fun peakDbFor(c: Cfg): Float {
+        val ch = chainFor(c, 44100.0)
+        var m = 0.0
+        for (i in 0 until 64) {
+            val f = 20.0 * 1000.0.pow(i / 63.0)
+            val w = 2 * PI * f / 44100.0
+            m = max(m, ch.sumOf { magDb(it, w) })
+        }
+        return m.toFloat().coerceAtLeast(0f)
     }
 
     private fun design(b: PBand, fs: Double): Coef {
