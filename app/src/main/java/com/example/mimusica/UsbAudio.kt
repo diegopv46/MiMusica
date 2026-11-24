@@ -222,6 +222,32 @@ object UsbAudio {
         return sb.toString()
     }
 
+    /** Abre el DAC y le pasa su descriptor de archivo al módulo nativo para que lo lea (solo lectura). */
+    fun probeNative(ctx: Context): String {
+        val sb = StringBuilder()
+        sb.appendLine("Biblioteca nativa: ${NativeUsb.versionOrError()}")
+        if (!NativeUsb.available) return sb.toString()
+        val usbMgr = ctx.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return sb.append("Este teléfono no ofrece USB host.").toString()
+        val dev = usbMgr.deviceList.values.firstOrNull { d ->
+            (0 until d.interfaceCount).any { d.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_AUDIO }
+        } ?: return sb.append("No hay ningún dispositivo USB de audio conectado.").toString()
+        if (!usbMgr.hasPermission(dev)) {
+            val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
+            usbMgr.requestPermission(
+                dev, PendingIntent.getBroadcast(ctx, 0, Intent("com.example.mimusica.USB_PERMISSION").setPackage(ctx.packageName), flags)
+            )
+            return sb.append("Falta el permiso USB. Acepta el aviso de Android y vuelve a tocar el botón.").toString()
+        }
+        val conn = usbMgr.openDevice(dev) ?: return sb.append("No pude abrir el dispositivo.").toString()
+        try {
+            sb.appendLine("Dispositivo: ${dev.productName ?: "sin nombre"}")
+            sb.append(NativeUsb.probe(conn.fileDescriptor, conn.rawDescriptors ?: ByteArray(0)))
+        } finally {
+            conn.close()
+        }
+        return sb.toString()
+    }
+
     fun sampleRates(ctx: Context): IntArray {
         val am = ctx.getSystemService(AudioManager::class.java)
         return device(am)?.sampleRates ?: IntArray(0)
@@ -285,6 +311,7 @@ fun AudioInfoScreen(onBack: () -> Unit) {
     var key by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     var hwText by remember { mutableStateOf("") }
+    var nativeText by remember { mutableStateOf("") }
     val canBP = remember(key) { runCatching { UsbAudio.offersBitPerfect(ctx) }.getOrNull() }
     val summary = remember(key) { runCatching { UsbAudio.summary(ctx) }.getOrDefault("") }
     val system = remember(key) { runCatching { SessionLog.systemSnapshot(ctx) }.getOrElse { "error: ${it.message}" } }
@@ -307,7 +334,7 @@ fun AudioInfoScreen(onBack: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { key++ }) { Text("Actualizar") }
             OutlinedButton(onClick = {
-                clip.setText(AnnotatedString("COMPILACION " + SessionLog.BUILD + "\n\nSISTEMA\n" + system + "\nREGISTRO\n" + SessionLog.lines.joinToString("\n") + "\n\nUSB\n" + report + "\n\nVOLUMEN DEL DAC\n" + hwText))
+                clip.setText(AnnotatedString("COMPILACION " + SessionLog.BUILD + "\n\nSISTEMA\n" + system + "\nREGISTRO\n" + SessionLog.lines.joinToString("\n") + "\n\nUSB\n" + report + "\n\nVOLUMEN DEL DAC\n" + hwText + "\n\nMÓDULO USB NATIVO\n" + nativeText))
             }) { Text("Copiar") }
             OutlinedButton(onClick = { SessionLog.clear() }) { Text("Borrar") }
         }
@@ -318,13 +345,20 @@ fun AudioInfoScreen(onBack: () -> Unit) {
                 hwText = withContext(Dispatchers.IO) { runCatching { UsbAudio.probeHwVolume(ctx) }.getOrElse { "Error: ${it.message}" } }
             }
         }) { Text("Probar lectura de volumen del DAC") }
+        OutlinedButton(onClick = {
+            scope.launch {
+                nativeText = "Leyendo el DAC con el módulo nativo…"
+                nativeText = withContext(Dispatchers.IO) { runCatching { UsbAudio.probeNative(ctx) }.getOrElse { "Error: ${it.message}" } }
+            }
+        }) { Text("Probar módulo USB nativo") }
         Spacer(Modifier.height(8.dp))
         Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
             Text(
                 "COMPILACIÓN: " + SessionLog.BUILD + "\n\nLO QUE VE EL SISTEMA AHORA\n" + system +
                     "\nREGISTRO DE LA SESIÓN\n" + SessionLog.lines.joinToString("\n").ifEmpty { "(vacío)" } +
                     "\n\nDIAGNÓSTICO USB\n" + report +
-                    (if (hwText.isNotEmpty()) "\n\nVOLUMEN DEL DAC (PRUEBA)\n" + hwText else ""),
+                    (if (hwText.isNotEmpty()) "\n\nVOLUMEN DEL DAC (PRUEBA)\n" + hwText else "") +
+                    (if (nativeText.isNotEmpty()) "\n\nMÓDULO USB NATIVO\n" + nativeText else ""),
                 fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall
             )
         }
