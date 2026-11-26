@@ -95,7 +95,7 @@ std::string parseDescriptors(const std::vector<uint8_t>& d, std::set<int>& iface
         } else if (type == 0x24 && len >= 4) {
             const int st = p[2];
             if (inAc && st == 0x01 && len >= 5) {
-                bcdAdc = u16(p + 3);
+                if (bcdAdc == 0) bcdAdc = u16(p + 3);
             } else if (cur >= 0) {
                 Stream& s = streams[cur];
                 if (st == 0x01 && s.proto == 0x20 && len >= 16) {

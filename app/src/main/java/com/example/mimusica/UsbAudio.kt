@@ -1,5 +1,6 @@
 package com.example.mimusica
 
+import androidx.activity.compose.BackHandler
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -312,6 +313,9 @@ fun AudioInfoScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var hwText by remember { mutableStateOf("") }
     var nativeText by remember { mutableStateOf("") }
+    var lab by remember { mutableStateOf(false) }
+    BackHandler(lab) { lab = false }
+    if (lab) { UsbLabScreen(onBack = { lab = false }); return }
     val canBP = remember(key) { runCatching { UsbAudio.offersBitPerfect(ctx) }.getOrNull() }
     val summary = remember(key) { runCatching { UsbAudio.summary(ctx) }.getOrDefault("") }
     val system = remember(key) { runCatching { SessionLog.systemSnapshot(ctx) }.getOrElse { "error: ${it.message}" } }
@@ -351,6 +355,7 @@ fun AudioInfoScreen(onBack: () -> Unit) {
                 nativeText = withContext(Dispatchers.IO) { runCatching { UsbAudio.probeNative(ctx) }.getOrElse { "Error: ${it.message}" } }
             }
         }) { Text("Probar módulo USB nativo") }
+        OutlinedButton(onClick = { lab = true }) { Text("Laboratorio USB (experimental)") }
         Spacer(Modifier.height(8.dp))
         Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
             Text(
