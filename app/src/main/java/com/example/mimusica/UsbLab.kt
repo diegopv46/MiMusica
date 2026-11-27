@@ -6,6 +6,7 @@ import android.content.Intent
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
+import android.media.AudioManager
 import android.os.Build
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -87,9 +88,12 @@ object UsbLab {
         busy = false
     }
 
-    suspend fun readVolume() {
+    suspend fun readVolume(ctx: Context) {
         busy = true
         add("— 3. Leer volumen —")
+        (ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.let {
+            add("Volumen del teléfono ahora: ${it.getStreamVolume(AudioManager.STREAM_MUSIC)} de ${it.getStreamMaxVolume(AudioManager.STREAM_MUSIC)}")
+        }
         val r = withContext(Dispatchers.IO) { NativeUsb.labVolume() }
         if (ok(r)) {
             val p = r.split(';')
@@ -116,10 +120,14 @@ object UsbLab {
         add(if (ok(r)) "Volumen fijado a %.1f dB (%s).".format(target, text(r)) else "No pude fijar el volumen: " + text(r))
     }
 
-    suspend fun tone() {
+    suspend fun tone(urbMs: Int, nUrb: Int) {
         busy = true
-        add("— 4. Tono de prueba (3 s, 48 kHz, suave) —")
-        val r = withContext(Dispatchers.IO) { NativeUsb.labTone(48000, 3000, -36) }
+        add("— 4. Tono de prueba (3 s, 48 kHz, suave; URB %d ms x %d) —".format(urbMs, nUrb))
+        val r = withContext(Dispatchers.IO) {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            try { NativeUsb.labTone(48000, 3000, -36, urbMs, nUrb) }
+            finally { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT) }
+        }
         add((if (ok(r)) "Terminó: " else "Falló: ") + text(r))
         busy = false
     }
@@ -183,7 +191,7 @@ fun UsbLabScreen(onBack: () -> Unit) {
         Button(onClick = { confirm = true }, enabled = UsbLab.connected && !UsbLab.claimed && !UsbLab.busy, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
             Text("2. Reclamar el DAC (corta su audio)")
         }
-        Button(onClick = { scope.launch { UsbLab.readVolume() } }, enabled = UsbLab.claimed && !UsbLab.busy, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Button(onClick = { scope.launch { UsbLab.readVolume(ctx) } }, enabled = UsbLab.claimed && !UsbLab.busy, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
             Text("3. Leer el volumen del DAC")
         }
         if (UsbLab.hasVol) {
@@ -206,8 +214,14 @@ fun UsbLabScreen(onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        Button(onClick = { scope.launch { UsbLab.tone() } }, enabled = UsbLab.claimed && !UsbLab.busy, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
-            Text("4. Tono de prueba (3 s, suave)")
+        Button(onClick = { scope.launch { UsbLab.tone(8, 8) } }, enabled = UsbLab.claimed && !UsbLab.busy, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            Text("4a. Tono: URB de 8 ms x 8")
+        }
+        Button(onClick = { scope.launch { UsbLab.tone(2, 16) } }, enabled = UsbLab.claimed && !UsbLab.busy, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+            Text("4b. Tono: URB de 2 ms x 16")
+        }
+        Button(onClick = { scope.launch { UsbLab.tone(16, 8) } }, enabled = UsbLab.claimed && !UsbLab.busy, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+            Text("4c. Tono: URB de 16 ms x 8")
         }
         Button(onClick = { scope.launch { UsbLab.recover() } }, enabled = (UsbLab.claimed || UsbLab.connected) && !UsbLab.busy, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
             Text("5. Devolver el DAC al sistema")

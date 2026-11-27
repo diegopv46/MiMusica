@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
@@ -158,19 +160,24 @@ std::string release() {
         unsigned int ifn = static_cast<unsigned int>(*it);
         if (ioctl(S.fd, USBDEVFS_RELEASEINTERFACE, &ifn) != 0) addf(out, "liberar %u: error %d (%s); ", ifn, errno, strerror(errno));
     }
-    int ok = 0, bad = 0;
+    int attached = 0, already = 0, none = 0, bad = 0;
     for (int ifn : S.claimed) {
         usbdevfs_ioctl cmd;
         memset(&cmd, 0, sizeof(cmd));
         cmd.ifno = ifn;
         cmd.ioctl_code = USBDEVFS_CONNECT;
         cmd.data = nullptr;
-        if (ioctl(S.fd, USBDEVFS_IOCTL, &cmd) == 0) ok++;
-        else { bad++; addf(out, "reconectar %d: error %d (%s); ", ifn, errno, strerror(errno)); }
+        errno = 0;
+        const int r = ioctl(S.fd, USBDEVFS_IOCTL, &cmd);
+        if (r > 0) { attached++; addf(out, "interfaz %d reconectada; ", ifn); }
+        else if (r == 0) { none++; addf(out, "interfaz %d: ningún controlador quiso tomarla; ", ifn); }
+        else if (errno == EBUSY) { already++; addf(out, "interfaz %d ya estaba asociada; ", ifn); }
+        else { bad++; addf(out, "interfaz %d: error %d (%s); ", ifn, errno, strerror(errno)); }
     }
     S.claimed.clear();
-    char head[96];
-    snprintf(head, sizeof(head), "%s;interfaces devueltas al sistema: %d, con error: %d; ", bad ? "ERR" : "OK", ok, bad);
+    char head[160];
+    snprintf(head, sizeof(head), "%s;reconectadas: %d, ya asociadas por el sistema: %d, sin controlador: %d, con error: %d; ",
+             (bad || none) ? "ERR" : "OK", attached, already, none, bad);
     return std::string(head) + out;
 }
 
@@ -273,7 +280,13 @@ bool fillUrb(usbdevfs_urb* urb, uint8_t* buf, int packets, const IsoPlan& plan, 
     return true;
 }
 
-std::string tone(int rate, int ms, int ampDb) {
+int64_t nowMs() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
+}
+
+std::string tone(int rate, int ms, int ampDb, int urbMs, int nUrbReq) {
     if (S.claimed.empty()) return "ERR;primero hay que reclamar el DAC";
     const Alt* chosen = nullptr;
     for (const Alt& a : S.alts) if (a.bits == 24 && a.channels == 2) { chosen = &a; break; }
@@ -307,10 +320,11 @@ std::string tone(int rate, int ms, int ampDb) {
     const int speed = ioctl(S.fd, USBDEVFS_GET_SPEED);
     const bool hs = speed >= 3;
     IsoPlan plan{(hs ? 8000 : 1000), chosen->channels, chosen->bits, chosen->subslot, chosen->maxPacket};
-    addf(out, "bus %s, alternativa %d (%d bits); ", hs ? "alta velocidad" : "velocidad completa", chosen->alt, chosen->bits);
+    const int packetsPerUrb = std::max(1, std::min(128, hs ? urbMs * 8 : urbMs));
+    const int nUrb = std::max(2, std::min(32, nUrbReq));
+    addf(out, "bus %s (código %d), alternativa %d (%d bits), URB de %d paquetes (%d ms) x %d; ",
+         hs ? "alta velocidad" : "velocidad completa", speed, chosen->alt, chosen->bits, packetsPerUrb, hs ? packetsPerUrb / 8 : packetsPerUrb, nUrb);
 
-    const int packetsPerUrb = hs ? 64 : 8;  // 8 ms por URB
-    const int nUrb = 8;
     const size_t urbSize = sizeof(usbdevfs_urb) + static_cast<size_t>(packetsPerUrb) * sizeof(usbdevfs_iso_packet_desc);
     std::vector<usbdevfs_urb*> urbs(nUrb, nullptr);
     std::vector<std::vector<uint8_t>> bufs(nUrb);
@@ -323,7 +337,9 @@ std::string tone(int rate, int ms, int ampDb) {
     st.total = static_cast<int64_t>(rate) * ms / 1000;
     st.amp = std::pow(10.0, ampDb / 20.0);
 
-    int inflight = 0, submitted = 0, badStatus = 0, lastStatus = 0;
+    int inflight = 0, submitted = 0, completed = 0, badStatus = 0, lastStatus = 0;
+    int64_t t0 = nowMs(), lastDone = t0, maxGap = 0;
+    std::vector<int> firstFrames, lastFrames;
     std::string fail;
     for (int i = 0; i < nUrb; ++i) {
         if (!fillUrb(urbs[i], bufs[i].data(), packetsPerUrb, plan, st, rate, chosen->epAddr)) { fail = "un paquete excede el máximo del endpoint"; break; }
@@ -332,15 +348,25 @@ std::string tone(int rate, int ms, int ampDb) {
     }
     while (inflight > 0 && fail.empty()) {
         pollfd pfd{S.fd, POLLOUT, 0};
-        const int pr = poll(&pfd, 1, 500);
-        if (pr <= 0) { fail = "se agotó la espera de transferencias"; break; }
+        const int pr = poll(&pfd, 1, 1000);
+        if (pr <= 0) {
+            addf(fail, "se agotó la espera: %d completados en %lld ms, %d en vuelo, hueco máximo previo %lld ms",
+                 completed, static_cast<long long>(nowMs() - t0), inflight, static_cast<long long>(maxGap));
+            break;
+        }
         usbdevfs_urb* done = nullptr;
         if (ioctl(S.fd, USBDEVFS_REAPURBNDELAY, &done) != 0) {
             if (errno == EAGAIN) continue;
             addf(fail, "REAPURB falló: %d (%s)", errno, strerror(errno));
             break;
         }
-        inflight--;
+        inflight--; completed++;
+        const int64_t t = nowMs();
+        maxGap = std::max<int64_t>(maxGap, t - lastDone);
+        lastDone = t;
+        if (firstFrames.size() < 3) firstFrames.push_back(done->start_frame);
+        lastFrames.push_back(done->start_frame);
+        if (lastFrames.size() > 3) lastFrames.erase(lastFrames.begin());
         if (done->status != 0 || done->error_count != 0) { badStatus++; lastStatus = done->status; }
         if (st.produced < st.total) {
             const int i = static_cast<int>(reinterpret_cast<intptr_t>(done->usercontext));
@@ -360,8 +386,13 @@ std::string tone(int rate, int ms, int ampDb) {
     ioctl(S.fd, USBDEVFS_SETINTERFACE, &si);
     for (auto* u : urbs) free(u);
 
-    addf(out, "URBs enviados: %d, con error: %d", submitted, badStatus);
+    addf(out, "enviados: %d, completados: %d, con error: %d", submitted, completed, badStatus);
     if (badStatus) addf(out, " (último estado %d)", lastStatus);
+    addf(out, ", hueco máximo entre completados: %lld ms, duración: %lld ms", static_cast<long long>(maxGap), static_cast<long long>(nowMs() - t0));
+    out += ", start_frame inicial:";
+    for (int f : firstFrames) addf(out, " %d", f);
+    out += ", final:";
+    for (int f : lastFrames) addf(out, " %d", f);
     return (fail.empty() ? "OK;" : "ERR;") + out + (fail.empty() ? "" : " · " + fail);
 }
 
@@ -392,8 +423,8 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_example_mimusica_NativeUsb_labSetVolume(JNIEnv* env, jobject, jint raw) { return env->NewStringUTF(lab::setVolume(raw).c_str()); }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_example_mimusica_NativeUsb_labTone(JNIEnv* env, jobject, jint rate, jint ms, jint ampDb) {
-    return env->NewStringUTF(lab::tone(rate, ms, ampDb).c_str());
+Java_com_example_mimusica_NativeUsb_labTone(JNIEnv* env, jobject, jint rate, jint ms, jint ampDb, jint urbMs, jint nUrb) {
+    return env->NewStringUTF(lab::tone(rate, ms, ampDb, urbMs, nUrb).c_str());
 }
 
 extern "C" JNIEXPORT jstring JNICALL

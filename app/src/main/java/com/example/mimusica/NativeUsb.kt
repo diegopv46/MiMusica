@@ -12,7 +12,7 @@ object NativeUsb {
     external fun labClaim(): String
     external fun labVolume(): String
     external fun labSetVolume(raw: Int): String
-    external fun labTone(rate: Int, ms: Int, ampDb: Int): String
+    external fun labTone(rate: Int, ms: Int, ampDb: Int, urbMs: Int, nUrb: Int): String
     external fun labRelease(): String
     external fun labReset(): String
 
